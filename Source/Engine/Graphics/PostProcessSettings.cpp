@@ -41,10 +41,13 @@ void BloomSettings::BlendWith(BloomSettings& other, float weight)
 
     BLEND_BOOL(Enabled);
     BLEND_FLOAT(Intensity);
-    BLEND_FLOAT(Threshold);
-    BLEND_FLOAT(BlurSigma);
-    BLEND_FLOAT(Limit);
+    BLEND_FLOAT(ThresholdStart);       
+    BLEND_FLOAT(ThresholdSoftness);    
+    BLEND_FLOAT(Scatter);              
+    BLEND_COL(TintColor);              
+    BLEND_FLOAT(ClampIntensity);       
 }
+
 
 void ToneMappingSettings::BlendWith(ToneMappingSettings& other, float weight)
 {

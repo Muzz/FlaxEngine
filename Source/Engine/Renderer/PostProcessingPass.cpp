@@ -13,6 +13,8 @@ PostProcessingPass::PostProcessingPass()
     : _shader(nullptr)
     , _psThreshold(nullptr)
     , _psScale(nullptr)
+    , _psBlendBloom(nullptr)
+    , _psKawaseBlur(nullptr)
     , _psBlurH(nullptr)
     , _psBlurV(nullptr)
     , _psGenGhosts(nullptr)
@@ -32,6 +34,8 @@ bool PostProcessingPass::Init()
     // Create pipeline states
     _psThreshold = GPUDevice::Instance->CreatePipelineState();
     _psScale = GPUDevice::Instance->CreatePipelineState();
+    _psKawaseBlur = GPUDevice::Instance->CreatePipelineState();
+    _psBlendBloom = GPUDevice::Instance->CreatePipelineState();
     _psBlurH = GPUDevice::Instance->CreatePipelineState();
     _psBlurV = GPUDevice::Instance->CreatePipelineState();
     _psGenGhosts = GPUDevice::Instance->CreatePipelineState();
@@ -79,6 +83,18 @@ bool PostProcessingPass::setupResources()
     {
         psDesc.PS = shader->GetPS("PS_Scale");
         if (_psScale->Init(psDesc))
+            return true;
+    }
+    if (!_psBlendBloom->IsValid())
+    {
+        psDesc.PS = shader->GetPS("PS_BlendBloom");
+        if (_psBlendBloom->Init(psDesc))
+            return true;
+    }
+    if (!_psKawaseBlur->IsValid())
+    {
+        psDesc.PS = shader->GetPS("PS_KawaseBlur");
+        if (_psKawaseBlur->Init(psDesc))
             return true;
     }
     if (!_psBlurH->IsValid())
@@ -169,6 +185,8 @@ void PostProcessingPass::Dispose()
     // Cleanup
     SAFE_DELETE_GPU_RESOURCE(_psThreshold);
     SAFE_DELETE_GPU_RESOURCE(_psScale);
+    SAFE_DELETE_GPU_RESOURCE(_psKawaseBlur);
+    SAFE_DELETE_GPU_RESOURCE(_psBlendBloom);
     SAFE_DELETE_GPU_RESOURCE(_psBlurH);
     SAFE_DELETE_GPU_RESOURCE(_psBlurV);
     SAFE_DELETE_GPU_RESOURCE(_psGenGhosts);
@@ -203,6 +221,8 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     int32 h2 = h1 >> 1;
     int32 h4 = h2 >> 1;
     int32 h8 = h4 >> 1;
+
+    const int32 BLOOM_MIP_COUNT = 6; // Controls number of mip levels for bloom
 
     // Ensure to have valid data and if at least one effect should be applied
     if (!(useBloom || useToneMapping || useCameraArtifacts) || checkIfSkipPass() || w8 == 0 || h8 ==0)
@@ -245,14 +265,18 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     }
     if (useBloom)
     {
-        data.BloomMagnitude = settings.Bloom.Intensity;
-        data.BloomThreshold = settings.Bloom.Threshold;
-        data.BloomBlurSigma = Math::Max(settings.Bloom.BlurSigma, 0.0001f);
-        data.BloomLimit = settings.Bloom.Limit;
+        data.BloomIntensity = settings.Bloom.Intensity;
+        data.BloomThresholdStart = settings.Bloom.ThresholdStart;
+        data.BloomThresholdSoftness = settings.Bloom.ThresholdSoftness;
+        data.BloomScatter = Math::Max(settings.Bloom.Scatter, 0.0001f);
+        data.BloomTintColor = (Float3)settings.Bloom.TintColor;
+        data.BloomClampIntensity = settings.Bloom.ClampIntensity;
+        data.BloomMipCount = BLOOM_MIP_COUNT;
+        data.BloomPadding = Float3(0.0f, 0.0f, 0.0f);
     }
     else
     {
-        data.BloomMagnitude = 0;
+        data.BloomIntensity = 0;
     }
     if (useLensFlares)
     {
@@ -308,80 +332,60 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     // Check if use bloom
     if (useBloom)
     {
-        // Bloom Threshold and downscale to 1/2
+        // Validate minimum dimensions
+        const int32 MIN_DIMENSION = 4;
+        if (w2 < MIN_DIMENSION || h2 < MIN_DIMENSION)
+        {
+            context->UnBindSR(2);
+            return;
+        }
+
+        // Pre-calculate mip sizes
+        struct MipSize {
+            int32 width;
+            int32 height;
+        };
+        MipSize mipSizes[6];  // Support up to 6 mips
+        for (int32 i = 0; i < BLOOM_MIP_COUNT; i++)
+        {
+            mipSizes[i].width = w2 >> i;
+            mipSizes[i].height = h2 >> i;
+        }
+
+        // Combined threshold and source treatment pass
         context->SetRenderTarget(bloomTmp1->View(0, 0));
-        context->SetViewportAndScissors((float)w2, (float)h2);
+        context->SetViewportAndScissors((float)mipSizes[0].width, (float)mipSizes[0].height);
         context->BindSR(0, input->View());
         context->SetState(_psThreshold);
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
-        // Downscale to 1/4
-        context->SetRenderTarget(bloomTmp1->View(0, 1));
-        context->SetViewportAndScissors((float)w4, (float)h4);
-        context->BindSR(0, bloomTmp1->View(0, 0));
-        context->SetState(_psScale);
-        context->DrawFullscreenTriangle();
-        context->ResetRenderTarget();
-
-        // Downscale to 1/8
-        context->SetRenderTarget(bloomTmp1->View(0, 2));
-        context->SetViewportAndScissors((float)w8, (float)h8);
-        context->BindSR(0, bloomTmp1->View(0, 1));
-        context->SetState(_psScale);
-        context->DrawFullscreenTriangle();
-        context->ResetRenderTarget();
-
-        // TODO: perform blur when downscaling (13 tap) and when upscaling? (9 tap)
-
-        // Gaussian Blur
-        GB_ComputeKernel(data.BloomBlurSigma, static_cast<float>(w8), static_cast<float>(h8));
-        //int32 blurStages = (int)Rendering.Quality + 1;
-        int32 blurStages = 2;
-        for (int32 i = 0; i < blurStages; i++)
+        // Kawase downscale chain
+        for (int32 mip = 1; mip < BLOOM_MIP_COUNT; mip++)
         {
-            // Horizontal Bloom Blur
-            Platform::MemoryCopy(_gbData.GaussianBlurCache, GaussianBlurCacheH, sizeof(GaussianBlurCacheH));
-            context->UpdateCB(cb1, &_gbData);
-            context->BindCB(1, cb1);
-            //
-            context->SetRenderTarget(bloomTmp2->View(0, 2));
-            context->BindSR(0, bloomTmp1->View(0, 2));
-            context->SetState(_psBlurH);
-            context->DrawFullscreenTriangle();
-            context->ResetRenderTarget();
-
-            // Vertical Bloom Blur
-            Platform::MemoryCopy(_gbData.GaussianBlurCache, GaussianBlurCacheV, sizeof(GaussianBlurCacheV));
-            context->UpdateCB(cb1, &_gbData);
-            context->BindCB(1, cb1);
-            //
-            context->SetRenderTarget(bloomTmp1->View(0, 2));
-            context->BindSR(0, bloomTmp2->View(0, 2));
-            context->SetState(_psBlurV);
+            context->SetRenderTarget(bloomTmp1->View(0, mip));
+            context->SetViewportAndScissors((float)mipSizes[mip].width, (float)mipSizes[mip].height);
+            context->BindSR(0, bloomTmp1->View(0, mip - 1));
+            context->SetState(_psScale);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
         }
 
-        // Upscale to 1/4 (use second tmp target to cache that downscale thress data for lens flares)
-        context->SetRenderTarget(bloomTmp2->View(0, 1));
-        context->SetViewportAndScissors((float)w4, (float)h4);
-        context->BindSR(0, bloomTmp1->View(0, 2));
-        context->SetState(_psScale);
-        context->DrawFullscreenTriangle();
-        context->ResetRenderTarget();
+        // Kawase upscale chain
+        for (int32 mip = BLOOM_MIP_COUNT - 2; mip >= 0; mip--)
+        {
+            GPUTexture* target = (mip % 2 == 0) ? bloomTmp2 : bloomTmp1;
+            context->SetRenderTarget(target->View(0, mip));
+            context->SetViewportAndScissors((float)mipSizes[mip].width, (float)mipSizes[mip].height);
+            context->BindSR(0, bloomTmp1->View(0, mip + 1));  // Higher mip
+            context->BindSR(1, bloomTmp1->View(0, mip));      // Current mip
+            context->SetState(_psKawaseBlur);
+            context->DrawFullscreenTriangle();
+            context->ResetRenderTarget();
+        }
 
-        // Upscale to 1/2
-        context->SetRenderTarget(bloomTmp1->View(0, 0));
-        context->SetViewportAndScissors((float)w2, (float)h2);
-        context->BindSR(0, bloomTmp2->View(0, 1));
-        context->SetState(_psScale);
-        context->DrawFullscreenTriangle();
-        context->ResetRenderTarget();
-
-        // Set bloom
-        context->UnBindSR(0);
-        context->BindSR(2, bloomTmp1->View(0, 0));
+        // Final result will be in bloomTmp2 since we end on mip 0 (even)
+        context->BindSR(2, bloomTmp2);
     }
     else
     {
