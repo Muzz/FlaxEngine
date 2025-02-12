@@ -69,10 +69,10 @@ private:
 
     // Post Processing
     AssetReference<Shader> _shader;
-    GPUPipelineState* _psThreshold;
-    GPUPipelineState* _psScale;
+    GPUPipelineState* _psBloomBrightPass;
+    GPUPipelineState* _psBloomDownsample;
     GPUPipelineState* _psBlendBloom;
-    GPUPipelineState* _psKawaseBlur;
+    GPUPipelineState* _psBloomDualFilterUpsample;
     GPUPipelineState* _psBlurH;
     GPUPipelineState* _psBlurV;
     GPUPipelineState* _psGenGhosts;
@@ -121,10 +121,10 @@ private:
 #if COMPILE_WITH_DEV_ENV
     void OnShaderReloading(Asset* obj)
     {
-        _psThreshold->ReleaseGPU();
-        _psScale->ReleaseGPU();
+        _psBloomBrightPass->ReleaseGPU();
+        _psBloomDownsample->ReleaseGPU();
         _psBlendBloom->ReleaseGPU();
-        _psKawaseBlur->ReleaseGPU();
+        _psBloomDualFilterUpsample->ReleaseGPU();
         _psBlurH->ReleaseGPU();
         _psBlurV->ReleaseGPU();
         _psGenGhosts->ReleaseGPU();

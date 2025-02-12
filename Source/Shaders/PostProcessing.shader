@@ -270,7 +270,7 @@ float4 PS_Threshold(Quad_VS2PS input) : SV_Target
 */
 
 META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_Threshold(Quad_VS2PS input) : SV_Target
+float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 {
     float3 color = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
     
@@ -301,46 +301,13 @@ float4 PS_Threshold(Quad_VS2PS input) : SV_Target
     
     // Scale color by the threshold factor
     color *= softThreshold;
-    
-    // Edge blur only for strong emissive
-    uint width, height;
-    Input0.GetDimensions(width, height);
-    float2 texelSize = 1.0 / float2(width, height);
-    
-    float3 blur = color * 4.0;
-    float blurWeight = 4.0;
-    
-    // Only blur strong emissive edges
-    float edgeWeight = saturate((softThreshold - 0.2) * 2.0);
-    float diagonalWeight = edgeWeight * 0.707;
-    
-    // Cross samples
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(texelSize.x, 0)).rgb * edgeWeight;
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord - float2(texelSize.x, 0)).rgb * edgeWeight;
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(0, texelSize.y)).rgb * edgeWeight;
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord - float2(0, texelSize.y)).rgb * edgeWeight;
-    blurWeight += edgeWeight * 4.0;
-    
-    // Diagonal samples
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(texelSize.x, texelSize.y)).rgb * diagonalWeight;
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord - float2(texelSize.x, texelSize.y)).rgb * diagonalWeight;
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(texelSize.x, -texelSize.y)).rgb * diagonalWeight;
-    blur += Input0.Sample(SamplerLinearClamp, input.TexCoord - float2(texelSize.x, -texelSize.y)).rgb * diagonalWeight;
-    blurWeight += diagonalWeight * 4.0;
-    
-    blur /= blurWeight;
-    
-    // Blend between original and blurred based on threshold
-    color = lerp(color, blur, edgeWeight * 0.5);
-    
-    // Apply bloom color tint
-    color *= BloomTintColor;
+   
     
     return float4(color, 1.0);
 }
 
 META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_KawaseBlur(Quad_VS2PS input) : SV_Target  // Upsample
+float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target  // Upsample
 {
     uint textureWidth, textureHeight;
     Input0.GetDimensions(textureWidth, textureHeight);
@@ -421,7 +388,7 @@ float4 PS_BlendBloom(Quad_VS2PS input) : SV_Target
 
 
 META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_Scale(Quad_VS2PS input) : SV_Target  // Downsample
+float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target  // Downsample
 {
     uint width, height;
     Input0.GetDimensions(width, height);

@@ -11,10 +11,10 @@
 
 PostProcessingPass::PostProcessingPass()
     : _shader(nullptr)
-    , _psThreshold(nullptr)
-    , _psScale(nullptr)
+    , _psBloomBrightPass(nullptr)
+    , _psBloomDownsample(nullptr)
     , _psBlendBloom(nullptr)
-    , _psKawaseBlur(nullptr)
+    , _psBloomDualFilterUpsample(nullptr)
     , _psBlurH(nullptr)
     , _psBlurV(nullptr)
     , _psGenGhosts(nullptr)
@@ -32,9 +32,9 @@ String PostProcessingPass::ToString() const
 bool PostProcessingPass::Init()
 {
     // Create pipeline states
-    _psThreshold = GPUDevice::Instance->CreatePipelineState();
-    _psScale = GPUDevice::Instance->CreatePipelineState();
-    _psKawaseBlur = GPUDevice::Instance->CreatePipelineState();
+    _psBloomBrightPass = GPUDevice::Instance->CreatePipelineState();
+    _psBloomDownsample = GPUDevice::Instance->CreatePipelineState();
+    _psBloomDualFilterUpsample = GPUDevice::Instance->CreatePipelineState();
     _psBlendBloom = GPUDevice::Instance->CreatePipelineState();
     _psBlurH = GPUDevice::Instance->CreatePipelineState();
     _psBlurV = GPUDevice::Instance->CreatePipelineState();
@@ -73,16 +73,16 @@ bool PostProcessingPass::setupResources()
 
     // Create pipeline stages
     GPUPipelineState::Description psDesc = GPUPipelineState::Description::DefaultFullscreenTriangle;
-    if (!_psThreshold->IsValid())
+    if (!_psBloomBrightPass->IsValid())
     {
-        psDesc.PS = shader->GetPS("PS_Threshold");
-        if (_psThreshold->Init(psDesc))
+        psDesc.PS = shader->GetPS("PS_BloomBrightPass");
+        if (_psBloomBrightPass->Init(psDesc))
             return true;
     }
-    if (!_psScale->IsValid())
+    if (!_psBloomDownsample->IsValid())
     {
-        psDesc.PS = shader->GetPS("PS_Scale");
-        if (_psScale->Init(psDesc))
+        psDesc.PS = shader->GetPS("PS_BloomDownsample");
+        if (_psBloomDownsample->Init(psDesc))
             return true;
     }
     if (!_psBlendBloom->IsValid())
@@ -91,10 +91,10 @@ bool PostProcessingPass::setupResources()
         if (_psBlendBloom->Init(psDesc))
             return true;
     }
-    if (!_psKawaseBlur->IsValid())
+    if (!_psBloomDualFilterUpsample->IsValid())
     {
-        psDesc.PS = shader->GetPS("PS_KawaseBlur");
-        if (_psKawaseBlur->Init(psDesc))
+        psDesc.PS = shader->GetPS("PS_BloomDualFilterUpsample");
+        if (_psBloomDualFilterUpsample->Init(psDesc))
             return true;
     }
     if (!_psBlurH->IsValid())
@@ -183,9 +183,9 @@ void PostProcessingPass::Dispose()
     RendererPass::Dispose();
 
     // Cleanup
-    SAFE_DELETE_GPU_RESOURCE(_psThreshold);
-    SAFE_DELETE_GPU_RESOURCE(_psScale);
-    SAFE_DELETE_GPU_RESOURCE(_psKawaseBlur);
+    SAFE_DELETE_GPU_RESOURCE(_psBloomBrightPass);
+    SAFE_DELETE_GPU_RESOURCE(_psBloomDownsample);
+    SAFE_DELETE_GPU_RESOURCE(_psBloomDualFilterUpsample);
     SAFE_DELETE_GPU_RESOURCE(_psBlendBloom);
     SAFE_DELETE_GPU_RESOURCE(_psBlurH);
     SAFE_DELETE_GPU_RESOURCE(_psBlurV);
@@ -356,7 +356,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         context->SetRenderTarget(bloomTmp1->View(0, 0));
         context->SetViewportAndScissors((float)mipSizes[0].width, (float)mipSizes[0].height);
         context->BindSR(0, input->View());
-        context->SetState(_psThreshold);
+        context->SetState(_psBloomBrightPass);
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
@@ -366,7 +366,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             context->SetRenderTarget(bloomTmp1->View(0, mip));
             context->SetViewportAndScissors((float)mipSizes[mip].width, (float)mipSizes[mip].height);
             context->BindSR(0, bloomTmp1->View(0, mip - 1));
-            context->SetState(_psScale);
+            context->SetState(_psBloomDownsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
         }
@@ -379,7 +379,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             context->SetViewportAndScissors((float)mipSizes[mip].width, (float)mipSizes[mip].height);
             context->BindSR(0, bloomTmp1->View(0, mip + 1));  // Higher mip
             context->BindSR(1, bloomTmp1->View(0, mip));      // Current mip
-            context->SetState(_psKawaseBlur);
+            context->SetState(_psBloomDualFilterUpsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
         }
