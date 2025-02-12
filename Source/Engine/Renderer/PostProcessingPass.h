@@ -71,7 +71,6 @@ private:
     AssetReference<Shader> _shader;
     GPUPipelineState* _psBloomBrightPass;
     GPUPipelineState* _psBloomDownsample;
-    GPUPipelineState* _psBlendBloom;
     GPUPipelineState* _psBloomDualFilterUpsample;
     GPUPipelineState* _psBlurH;
     GPUPipelineState* _psBlurV;
@@ -123,7 +122,6 @@ private:
     {
         _psBloomBrightPass->ReleaseGPU();
         _psBloomDownsample->ReleaseGPU();
-        _psBlendBloom->ReleaseGPU();
         _psBloomDualFilterUpsample->ReleaseGPU();
         _psBlurH->ReleaseGPU();
         _psBlurV->ReleaseGPU();

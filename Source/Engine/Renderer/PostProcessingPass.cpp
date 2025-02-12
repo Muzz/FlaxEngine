@@ -13,7 +13,6 @@ PostProcessingPass::PostProcessingPass()
     : _shader(nullptr)
     , _psBloomBrightPass(nullptr)
     , _psBloomDownsample(nullptr)
-    , _psBlendBloom(nullptr)
     , _psBloomDualFilterUpsample(nullptr)
     , _psBlurH(nullptr)
     , _psBlurV(nullptr)
@@ -35,7 +34,6 @@ bool PostProcessingPass::Init()
     _psBloomBrightPass = GPUDevice::Instance->CreatePipelineState();
     _psBloomDownsample = GPUDevice::Instance->CreatePipelineState();
     _psBloomDualFilterUpsample = GPUDevice::Instance->CreatePipelineState();
-    _psBlendBloom = GPUDevice::Instance->CreatePipelineState();
     _psBlurH = GPUDevice::Instance->CreatePipelineState();
     _psBlurV = GPUDevice::Instance->CreatePipelineState();
     _psGenGhosts = GPUDevice::Instance->CreatePipelineState();
@@ -85,12 +83,7 @@ bool PostProcessingPass::setupResources()
         if (_psBloomDownsample->Init(psDesc))
             return true;
     }
-    if (!_psBlendBloom->IsValid())
-    {
-        psDesc.PS = shader->GetPS("PS_BlendBloom");
-        if (_psBlendBloom->Init(psDesc))
-            return true;
-    }
+
     if (!_psBloomDualFilterUpsample->IsValid())
     {
         psDesc.PS = shader->GetPS("PS_BloomDualFilterUpsample");
@@ -186,7 +179,6 @@ void PostProcessingPass::Dispose()
     SAFE_DELETE_GPU_RESOURCE(_psBloomBrightPass);
     SAFE_DELETE_GPU_RESOURCE(_psBloomDownsample);
     SAFE_DELETE_GPU_RESOURCE(_psBloomDualFilterUpsample);
-    SAFE_DELETE_GPU_RESOURCE(_psBlendBloom);
     SAFE_DELETE_GPU_RESOURCE(_psBlurH);
     SAFE_DELETE_GPU_RESOURCE(_psBlurV);
     SAFE_DELETE_GPU_RESOURCE(_psGenGhosts);
@@ -268,7 +260,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         data.BloomIntensity = settings.Bloom.Intensity;
         data.BloomThresholdStart = settings.Bloom.ThresholdStart;
         data.BloomThresholdSoftness = settings.Bloom.ThresholdSoftness;
-        data.BloomScatter = Math::Max(settings.Bloom.Scatter, 0.0001f);
+        data.BloomScatter = Math::Max(settings.Bloom.Scatter, 0.000001f);
         data.BloomTintColor = (Float3)settings.Bloom.TintColor;
         data.BloomClampIntensity = settings.Bloom.ClampIntensity;
         data.BloomMipCount = BLOOM_MIP_COUNT;
@@ -330,17 +322,26 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom");
 
     // Check if use bloom
-    // Create bloom chain with fewer, higher quality mips
-    auto tempDesc = GPUTextureDescription::New2D(w2, h2, BLOOM_MIP_COUNT,
-        output->Format(),
-        GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
-
-    auto bloomTmp1 = RenderTargetPool::Get(tempDesc);
-    auto bloomTmp2 = RenderTargetPool::Get(tempDesc);
-
     if (useBloom)
     {
-        // Initial bright pass at half resolution
+        // Validate minimum dimensions
+        const int32 MIN_DIMENSION = 4;
+        if (w2 < MIN_DIMENSION || h2 < MIN_DIMENSION)
+        {
+            context->UnBindSR(2);
+            return;
+        }
+
+        // Create two temporary buffers with mip chains
+        auto tempDesc = GPUTextureDescription::New2D(w2, h2, BLOOM_MIP_COUNT,
+            output->Format(),
+            GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
+        auto bloomTmp1 = RenderTargetPool::Get(tempDesc);
+        auto bloomTmp2 = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(bloomTmp1, "PostProcessing.Bloom1");
+        RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom2");
+
+        // 1. Initial bright pass + first downsample (combines two steps for better cache usage)
         context->SetRenderTarget(bloomTmp1->View(0, 0));
         context->SetViewportAndScissors((float)w2, (float)h2);
         context->BindSR(0, input->View());
@@ -348,7 +349,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
-        // Progressive downsample with position preservation
+        // 2. Progressive downsample chain with intensity preservation
         for (int32 mip = 1; mip < BLOOM_MIP_COUNT; mip++)
         {
             const float mipWidth = w2 >> mip;
@@ -362,7 +363,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             context->ResetRenderTarget();
         }
 
-        // Progressive upsample with position-aware blending
+        // 3. Progressive upsample chain with dual filtering
         for (int32 mip = BLOOM_MIP_COUNT - 2; mip >= 0; mip--)
         {
             const float mipWidth = w2 >> mip;
@@ -370,11 +371,20 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
 
             context->SetRenderTarget((mip % 2 == 0) ? bloomTmp2->View(0, mip) : bloomTmp1->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);
-            context->BindSR(0, bloomTmp1->View(0, mip + 1));
-            context->BindSR(1, bloomTmp1->View(0, mip));
+            //context->BindSR(0, bloomTmp1->View(0, mip + 1));  // Higher mip
+            //context->BindSR(1, bloomTmp1->View(0, mip));      // Current mip
+            context->BindSR(0, (mip % 2 == 0) ? bloomTmp1->View(0, mip + 1) : bloomTmp2->View(0, mip + 1));
+            context->BindSR(1, (mip % 2 == 0) ? bloomTmp1->View(0, mip) : bloomTmp2->View(0, mip));
             context->SetState(_psBloomDualFilterUpsample);
             context->DrawFullscreenTriangle();
+            context->ResetRenderTarget();
         }
+
+        // Final output will be in bloomTmp2
+        context->BindSR(2, bloomTmp2);
+
+        RenderTargetPool::Release(bloomTmp1);
+        RenderTargetPool::Release(bloomTmp2);
     }
     else
     {

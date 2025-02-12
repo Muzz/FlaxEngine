@@ -281,6 +281,7 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
     float3 color = 0;
     float totalWeight = 0;
     
+
     // Center sample with high weight for energy preservation
     float3 center = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
     float centerWeight = 4.0;
@@ -321,8 +322,14 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
     float contribution = max(0, luminance - (threshold - knee));
     contribution = contribution * contribution / (2.0 * knee + 0.00001);
     
+    float testc = BloomClampIntensity*50;
+    float3 clamped = (color * contribution);
+    clamped.r = min(clamped.r,testc);
+    clamped.g = min(clamped.g,testc);
+    clamped.b = min(clamped.b,testc);
+
     // Store threshold result in alpha for downsample chain
-    return float4(color * contribution, luminance);
+    return float4(clamped, luminance);
 }
 
 META_PS(true, FEATURE_LEVEL_ES2)
@@ -384,7 +391,7 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     // Maintain fixed scale through mip chain
     float2 scale = float2(2.0, 2.0);
     float baseOffset = 1.0;
-    float offsetScale = BloomScatter * baseOffset;
+    float offsetScale =  (BloomScatter)  * baseOffset;
 
     float3 color = 0;
     float totalWeight = 0;
@@ -662,13 +669,14 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
 
 	// Bloom
     // Bloom with dual filtering upsample
+    
     BRANCH
     if (BloomIntensity > 0)
     {
         uint textureWidth, textureHeight;
         Input2.GetDimensions(textureWidth, textureHeight);
         float2 textureSize = float2(textureWidth, textureHeight);
-        int maxMip = BloomMipCount - 1;
+        int maxMip = BloomMipCount - 1; // 5
     
         // Initialize with smallest mip (most blurred)
         float3 bloom = Input2.SampleLevel(SamplerLinearClamp, input.TexCoord, maxMip).rgb;
@@ -723,6 +731,34 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
     #if !NO_GRADING_LUT
 	    color.rgb = ColorLookupTable(color.rgb);
     #endif
+
+   
+    // way to preview mips
+    BRANCH
+    if (BloomIntensity > 0)
+    {
+            if (false){
+            // Sample a specific mip level (0-5) directly
+            // Change this number to view different mip levels
+            const float MIP_TO_VIEW = 5; // Try values 0-5
+    
+            // Pick the right texture based on whether mip is even or odd
+            float3 bloom;
+            if (MIP_TO_VIEW % 2 == 0)
+            {
+                // Even mips are in bloomTmp2 (Input2)
+                bloom = Input2.SampleLevel(SamplerLinearClamp, input.TexCoord, MIP_TO_VIEW).rgb;
+            }
+            else
+            {
+                // Odd mips are in bloomTmp1 (Input1) 
+                bloom = Input1.SampleLevel(SamplerLinearClamp, input.TexCoord, MIP_TO_VIEW).rgb;
+            }
+    
+            // Output just this mip level
+            color.rgb = bloom;
+           }
+    }
 
 	// Film Grain
 	BRANCH
