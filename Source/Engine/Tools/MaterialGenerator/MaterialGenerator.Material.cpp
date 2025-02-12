@@ -4,6 +4,7 @@
 
 #include "MaterialGenerator.h"
 #include "Engine/Content/Assets/MaterialFunction.h"
+#include "Engine/Visject/ShaderStringBuilder.h"
 
 void MaterialGenerator::ProcessGroupMaterial(Box* box, Node* node, Value& value)
 {
@@ -641,6 +642,99 @@ void MaterialGenerator::ProcessGroupMaterial(Box* box, Node* node, Value& value)
         auto outerMask = writeLocal(ValueType::Float, String::Format(TEXT("saturate(((((1.0 - {0}) - (1.0 - (1.0 - {1}))) + {2}) / {2}))"), c.Value, innerBounds.Value, falloff.Value), node);
         auto mask = writeLocal(ValueType::Float, String::Format(TEXT("{0} * {1}"), innerMask.Value, outerMask.Value), node);
         value = writeLocal(ValueType::Float3, String::Format(TEXT("float3({0}, {1}, {2})"), innerMask.Value, outerMask.Value, mask.Value), node);
+        break;
+    }
+    // Hue Saturation Value
+    case 50:
+    {
+        const auto color = tryGetValue(node->GetBox(0), Value::One).AsFloat4();
+        if (!color.IsValid())
+        {
+            value = Value::Zero;
+            break;
+        }
+
+        const auto hue = tryGetValue(node->GetBox(1), node->Values[0]).AsFloat();
+        const auto saturation = tryGetValue(node->GetBox(2), node->Values[1]).AsFloat();
+        const auto val = tryGetValue(node->GetBox(3), node->Values[2]).AsFloat();
+
+        auto result = writeLocal(Value::InitForZero(ValueType::Float4), node);
+
+        const String hsvAdjust = ShaderStringBuilder()
+            .Code(TEXT(R"(
+    {
+        // Store alpha
+        float alpha = %COLOR%.a;
+        float3 rgb = %COLOR%.rgb;
+        
+        // Convert RGB to HSV
+        float4 p = rgb.g < rgb.b ? float4(rgb.bg, -1.0, 2.0/3.0) : float4(rgb.gb, 0.0, -1.0/3.0);
+        float4 q = rgb.r < p.x ? float4(p.xyw, rgb.r) : float4(rgb.r, p.yzx);
+        float pmin = min(q.w, q.y);
+        
+        float h = abs((q.w - q.y) / (6.0 * (q.x - pmin) + 1e-10) + q.z);
+        float s = (q.x - pmin) / (q.x + 1e-10);
+        float v = q.x;
+
+        // Apply adjustments (-1 to 1 range)
+        h = frac(h + %HUE% * 0.5);
+        s = saturate(s * (1.0 + %SATURATION%));
+        v = v * (1.0 + %VALUE%);
+
+        // Convert HSV back to RGB
+        float3 k = float3(1.0, 2.0/3.0, 1.0/3.0);
+        float3 p3 = abs(frac(h + k) * 6.0 - 3.0);
+        float3 final = v * lerp(1.0, saturate(p3 - 1.0), s);
+
+        %RESULT% = float4(final, alpha);
+    }
+    )"))
+            .Replace(TEXT("%COLOR%"), color.Value)
+            .Replace(TEXT("%HUE%"), hue.Value)
+            .Replace(TEXT("%SATURATION%"), saturation.Value)
+            .Replace(TEXT("%VALUE%"), val.Value)
+            .Replace(TEXT("%RESULT%"), result.Value)
+            .Build();
+
+        _writer.Write(*hsvAdjust);
+        value = result;
+        break;
+    }
+    // Overlay Blend
+    case 51:
+    {
+        const auto baseColor = tryGetValue(node->GetBox(0), Value::One).AsFloat4();
+        const auto blendColor = tryGetValue(node->GetBox(1), Value::One).AsFloat4();
+        const auto blendAmount = tryGetValue(node->GetBox(2), node->Values[0]).AsFloat();
+
+        auto result = writeLocal(Value::InitForZero(ValueType::Float4), node);
+
+        const String overlayBlend = ShaderStringBuilder()
+            .Code(TEXT(R"(
+    {
+        float3 base = %BASE%.rgb;
+        float3 blend = %BLEND%.rgb;
+        float alpha = %BASE%.a;
+        
+        // Overlay blend per channel
+        float3 overlaid;
+        overlaid.r = base.r <= 0.5 ? (2.0 * base.r * blend.r) : (1.0 - 2.0 * (1.0 - base.r) * (1.0 - blend.r));
+        overlaid.g = base.g <= 0.5 ? (2.0 * base.g * blend.g) : (1.0 - 2.0 * (1.0 - base.g) * (1.0 - blend.g));
+        overlaid.b = base.b <= 0.5 ? (2.0 * base.b * blend.b) : (1.0 - 2.0 * (1.0 - base.b) * (1.0 - blend.b));
+        
+        // Apply blend factor
+        float3 final = lerp(base, overlaid, %AMOUNT%);
+        %RESULT% = float4(final, alpha);
+    }
+    )"))
+            .Replace(TEXT("%BASE%"), baseColor.Value)
+            .Replace(TEXT("%BLEND%"), blendColor.Value)
+            .Replace(TEXT("%AMOUNT%"), blendAmount.Value)
+            .Replace(TEXT("%RESULT%"), result.Value)
+            .Build();
+
+        _writer.Write(*overlayBlend);
+        value = result;
         break;
     }
     default:

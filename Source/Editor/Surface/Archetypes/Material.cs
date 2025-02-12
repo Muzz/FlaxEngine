@@ -1073,6 +1073,47 @@ namespace FlaxEditor.Surface.Archetypes
                     NodeElementArchetype.Factory.Output(0, string.Empty, typeof(Float3), 4),
                 ]
             },
+            new NodeArchetype
+            {
+                TypeID = 50,
+                Title = "Hue Saturation Value",
+                Description = "modifies the HSV of a color, values are from -1:1, preserves alpha",
+                Flags = NodeFlags.MaterialGraph,
+                Size = new Float2(175, 80),
+                DefaultValues =
+                [
+                    0.0f,  // For Hue (index 0)
+                    0.0f,  // For Sat (index 1)
+                    0.0f,  // For Val (index 2)
+                ],
+                Elements =
+                [
+                    NodeElementArchetype.Factory.Input(0, "RGBA", true, typeof(Float4), 0),          // No default
+                    NodeElementArchetype.Factory.Input(1, "Hue", true, typeof(float), 1, 0),        // Uses DefaultValues[0]
+                    NodeElementArchetype.Factory.Input(2, "Sat", true, typeof(float), 2, 1),        // Uses DefaultValues[1]
+                    NodeElementArchetype.Factory.Input(3, "Val", true, typeof(float), 3, 2),        // Uses DefaultValues[2]
+                    NodeElementArchetype.Factory.Output(0, "RGBA", typeof(Float4), 4),
+                ]
+            },
+            new NodeArchetype
+            {
+                TypeID = 51,
+                Title = "Overlay Blend",
+                Description = "Overlay layer blend mode. Does add >0.5 and multiply <0.5",
+                Flags = NodeFlags.MaterialGraph,
+                Size = new Float2(175, 80),
+                DefaultValues =
+                [
+                    1.0f,  // For blend (index 0)
+                ],
+                Elements =
+                [
+                    NodeElementArchetype.Factory.Input(0, "RGBA", true, typeof(Float4), 0),          // No default
+                    NodeElementArchetype.Factory.Input(1, "RGBA", true, typeof(Float4), 1),          // No default
+                    NodeElementArchetype.Factory.Input(3, "Blend", true, typeof(float), 2, 0),        // Uses DefaultValues[0]
+                    NodeElementArchetype.Factory.Output(0, "RGBA", typeof(Float4), 3),
+                ]
+            },
         };
     }
 }
