@@ -330,80 +330,54 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom");
 
     // Check if use bloom
-// Check if use bloom
+    // Create bloom chain with fewer, higher quality mips
+    auto tempDesc = GPUTextureDescription::New2D(w2, h2, BLOOM_MIP_COUNT,
+        output->Format(),
+        GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
+
+    auto bloomTmp1 = RenderTargetPool::Get(tempDesc);
+    auto bloomTmp2 = RenderTargetPool::Get(tempDesc);
+
     if (useBloom)
     {
-        // Validate minimum dimensions
-        const int32 MIN_DIMENSION = 4;
-        if (w2 < MIN_DIMENSION || h2 < MIN_DIMENSION)
-        {
-            context->UnBindSR(2);
-            return;
-        }
-
-        // Optimal mip chain configuration
-        //const int32 BLOOM_MIP_COUNT = 5;  // Sweet spot between quality/performance
-
-        // Pre-calculate mip sizes
-        struct MipSize {
-            int32 width;
-            int32 height;
-        };
-        MipSize mipSizes[BLOOM_MIP_COUNT];
-        for (int32 i = 0; i < BLOOM_MIP_COUNT; i++)
-        {
-            mipSizes[i].width = w2 >> i;
-            mipSizes[i].height = h2 >> i;
-        }
-
-        auto tempDesc = GPUTextureDescription::New2D(w2, h2, BLOOM_MIP_COUNT, output->Format(), GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
-        auto bloomTmp1 = RenderTargetPool::Get(tempDesc);
-        auto bloomTmp2 = RenderTargetPool::Get(tempDesc);
-        RENDER_TARGET_POOL_SET_NAME(bloomTmp1, "PostProcessing.Bloom1");
-        RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom2");
-
-        // Bright pass + initial downsample
+        // Initial bright pass at half resolution
         context->SetRenderTarget(bloomTmp1->View(0, 0));
-        context->SetViewportAndScissors((float)mipSizes[0].width, (float)mipSizes[0].height);
+        context->SetViewportAndScissors((float)w2, (float)h2);
         context->BindSR(0, input->View());
         context->SetState(_psBloomBrightPass);
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
-        // Downsample chain
+        // Progressive downsample with position preservation
         for (int32 mip = 1; mip < BLOOM_MIP_COUNT; mip++)
         {
+            const float mipWidth = w2 >> mip;
+            const float mipHeight = h2 >> mip;
+
             context->SetRenderTarget(bloomTmp1->View(0, mip));
-            context->SetViewportAndScissors((float)mipSizes[mip].width, (float)mipSizes[mip].height);
+            context->SetViewportAndScissors(mipWidth, mipHeight);
             context->BindSR(0, bloomTmp1->View(0, mip - 1));
             context->SetState(_psBloomDownsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
         }
 
-        // Upsample chain with dual filtering
+        // Progressive upsample with position-aware blending
         for (int32 mip = BLOOM_MIP_COUNT - 2; mip >= 0; mip--)
         {
-            GPUTexture* target = (mip % 2 == 0) ? bloomTmp2 : bloomTmp1;
-            context->SetRenderTarget(target->View(0, mip));
-            context->SetViewportAndScissors((float)mipSizes[mip].width, (float)mipSizes[mip].height);
-            context->BindSR(0, bloomTmp1->View(0, mip + 1));  // Higher mip
-            context->BindSR(1, bloomTmp1->View(0, mip));      // Current mip
+            const float mipWidth = w2 >> mip;
+            const float mipHeight = h2 >> mip;
+
+            context->SetRenderTarget((mip % 2 == 0) ? bloomTmp2->View(0, mip) : bloomTmp1->View(0, mip));
+            context->SetViewportAndScissors(mipWidth, mipHeight);
+            context->BindSR(0, bloomTmp1->View(0, mip + 1));
+            context->BindSR(1, bloomTmp1->View(0, mip));
             context->SetState(_psBloomDualFilterUpsample);
             context->DrawFullscreenTriangle();
-            context->ResetRenderTarget();
         }
-
-        // Final output will be in bloomTmp2 since we end on mip 0 (even)
-        context->BindSR(2, bloomTmp2);
-
-        // Cleanup
-        RenderTargetPool::Release(bloomTmp1);
-        RenderTargetPool::Release(bloomTmp2);
     }
     else
     {
-        // No bloom texture
         context->UnBindSR(2);
     }
 
