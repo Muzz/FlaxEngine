@@ -451,31 +451,6 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     return float4(color, 1.0);
 }
 
-float luminance(float3 color)
-{
-    return dot(color, float3(0.2126, 0.7152, 0.0722)); // Rec. 709 luminance coefficients
-}
-
-META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_BlendBloom(Quad_VS2PS input) : SV_Target
-{
-    float3 baseColor = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-    float3 bloomColor = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-
-    // Fixed intensity scaling
-    float intensity = BloomIntensity * 0.1;
-    bloomColor *= BloomTintColor * intensity;
-
-    // Energy-preserving blend
-    float3 result = baseColor + bloomColor;
-    
-    // Soft clipping to prevent over-saturation
-    float softLimit = 0.95;
-    float overshoot = max(0, luminance(result) - softLimit);
-    result *= 1.0 / (1.0 + overshoot);
-
-    return float4(result, 1.0);
-}
 
 // Horizontal gaussian blur
 META_PS(true, FEATURE_LEVEL_ES2)
@@ -706,7 +681,8 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
 
             float3 currentMip = (sum.rgb / 12.0);
         
-            mipWeight = 1.0 / (adjustedScatter * (i + 1));
+            //mipWeight = 1.0 / (adjustedScatter * (i + 1));
+            mipWeight = 1.0 / pow(adjustedScatter * (i + 1), 0.3);
             totalWeight += mipWeight;
         
             bloom += currentMip * mipWeight;

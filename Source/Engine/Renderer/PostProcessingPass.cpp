@@ -341,6 +341,14 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         RENDER_TARGET_POOL_SET_NAME(bloomTmp1, "PostProcessing.Bloom1");
         RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom2");
 
+        // Clear all mips of both textures
+        for (int32 mip = 0; mip < BLOOM_MIP_COUNT; mip++)
+        {
+            context->Clear(bloomTmp1->View(0, mip), Color::Transparent);
+            context->Clear(bloomTmp2->View(0, mip), Color::Transparent);
+        }
+
+
         // 1. Initial bright pass + first downsample (combines two steps for better cache usage)
         context->SetRenderTarget(bloomTmp1->View(0, 0));
         context->SetViewportAndScissors((float)w2, (float)h2);
