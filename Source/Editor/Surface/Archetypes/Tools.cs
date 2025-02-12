@@ -1168,6 +1168,7 @@ namespace FlaxEditor.Surface.Archetypes
                 if (base.OnMouseDown(location, button))
                     return true;
 
+                Cursor = CursorType.Cross;
                 if (button == MouseButton.Left)
                 {
                     _isMouseDown = true;
@@ -1216,6 +1217,7 @@ namespace FlaxEditor.Surface.Archetypes
                 if (base.OnMouseUp(location, button))
                     return true;
 
+                Cursor = CursorType.Default;
                 if (button == MouseButton.Left)
                 {
                     _isMouseDown = false;
@@ -1264,9 +1266,10 @@ namespace FlaxEditor.Surface.Archetypes
             }
 
             /// <inheritdoc />
-            public void DrawConnectingLine(ref Float2 startPos, ref Float2 endPos, ref Color color)
+            public void DrawConnectingLine(ref Float2 startPos, ref Float2 endPos, ref Color color, bool freefloating)
             {
-                OutputBox.DrawConnection(Surface.Style, ref startPos, ref endPos, ref color, OutputBox.ConnectingConnectionThickness);
+                
+                OutputBox.DrawConnection(Surface.Style, ref startPos, ref endPos, ref color, freefloating, OutputBox.ConnectingConnectionThickness);
             }
 
             /// <inheritdoc />

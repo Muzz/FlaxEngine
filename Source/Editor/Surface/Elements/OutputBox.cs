@@ -52,8 +52,9 @@ namespace FlaxEditor.Surface.Elements
         /// <param name="start">The start location.</param>
         /// <param name="end">The end location.</param>
         /// <param name="color">The connection color.</param>
+        /// <param name="freeFloating">If it's a standalone node.</param>
         /// <param name="thickness">The connection thickness.</param>
-        public static void DrawConnection(SurfaceStyle style, ref Float2 start, ref Float2 end, ref Color color, float thickness = DefaultConnectionThickness)
+        public static void DrawConnection(SurfaceStyle style, ref Float2 start, ref Float2 end, ref Color color, bool freeFloating = false, float thickness = DefaultConnectionThickness)
         {
             if (style.DrawConnection != null)
             {
@@ -62,46 +63,92 @@ namespace FlaxEditor.Surface.Elements
             }
 
             float connectionOffset = Mathf.Max(0f, DefaultConnectionOffset * (1 - Editor.Instance.Options.Options.Interface.ConnectionCurvature));
-            Float2 offsetStart = new Float2(start.X + connectionOffset, start.Y);
-            Float2 offsetEnd = new Float2(end.X - connectionOffset, end.Y);
+            Float2 offsetStart, offsetEnd;
+            Float2 control1, control2;  // Declare control points here
 
-            // Calculate control points
-            CalculateBezierControlPoints(offsetStart, offsetEnd, out var control1, out var control2);
+            if (freeFloating)
+            {
+                Debug.Log("Freefloating");
+                // Determine primary flow direction
+                Float2 direction = end - start;
+                bool isHorizontal = Math.Abs(direction.X) > Math.Abs(direction.Y);
 
-            // Draw offset lines only if necessary
+
+                // Apply offset based on primary direction
+                if (isHorizontal)
+                {
+                    float xOffset = Math.Sign(direction.X) * connectionOffset;
+                    offsetStart = new Float2(start.X + xOffset, start.Y);
+                    offsetEnd = new Float2(end.X - xOffset, end.Y);
+                }
+                else
+                {
+                    float yOffset = Math.Sign(direction.Y) * connectionOffset;
+                    offsetStart = new Float2(start.X, start.Y + yOffset);
+                    offsetEnd = new Float2(end.X, end.Y - yOffset);
+                }
+
+                // Draw offset lines if necessary
+                if (connectionOffset >= float.Epsilon)
+                {
+                    Render2D.DrawLine(start, offsetStart, color, thickness);
+                    Render2D.DrawLine(offsetEnd, end, color, thickness);
+                }
+
+                // Calculate and draw bezier curve
+                CalculateBezierControlPoints(offsetStart, offsetEnd, isHorizontal, out control1, out control2);
+            }
+            else
+            {
+                // Standard left-to-right box connections
+                offsetStart = new Float2(start.X + connectionOffset, start.Y);
+                offsetEnd = new Float2(end.X - connectionOffset, end.Y);
+                CalculateBezierControlPoints(offsetStart, offsetEnd, true, out control1, out control2);
+            }
+
+            // Draw offset lines if necessary
             if (connectionOffset >= float.Epsilon)
             {
                 Render2D.DrawLine(start, offsetStart, color, thickness);
                 Render2D.DrawLine(offsetEnd, end, color, thickness);
             }
 
-            // Draw line
+            // Draw bezier curve
             Render2D.DrawBezier(offsetStart, control1, control2, offsetEnd, color, thickness);
-
-            /*
-            // Debug drawing control points
-            var bSize = new Float2(4, 4);
-            Render2D.FillRectangle(new Rectangle(control1 - bSize * 0.5f, bSize), Color.Blue);
-            Render2D.FillRectangle(new Rectangle(control2 - bSize * 0.5f, bSize), Color.Gold);
-            */
         }
 
-        private static void CalculateBezierControlPoints(Float2 start, Float2 end, out Float2 control1, out Float2 control2)
+
+        private static void CalculateBezierControlPoints(Float2 start, Float2 end, bool isHorizontal, out Float2 control1, out Float2 control2)
         {
-            // Control points parameters
             const float minControlLength = 50f;
             const float maxControlLength = 120f;
-            var dst = (end - start).Length;
-            var yDst = Mathf.Abs(start.Y - end.Y);
 
-            // Calculate control points
-            var minControlDst = dst * 0.5f;
-            var maxControlDst = Mathf.Max(Mathf.Min(maxControlLength, dst), minControlLength);
-            var controlDst = Mathf.Lerp(minControlDst, maxControlDst, Mathf.Clamp(yDst / minControlLength, 0f, 1f));
+            var direction = end - start;
+            float dst = direction.Length;
+
+            // Calculate perpendicular distance based on primary direction
+            float perpDistance = isHorizontal
+                ? Mathf.Abs(start.Y - end.Y)
+                : Mathf.Abs(start.X - end.X);
+
+            // Calculate control points distance
+            float minControlDst = dst * 0.5f;
+            float maxControlDst = Mathf.Max(Mathf.Min(maxControlLength, dst), minControlLength);
+            float controlDst = Mathf.Lerp(minControlDst, maxControlDst, Mathf.Clamp(perpDistance / minControlLength, 0f, 1f));
             controlDst *= Editor.Instance.Options.Options.Interface.ConnectionCurvature;
 
-            control1 = new Float2(start.X + controlDst, start.Y);
-            control2 = new Float2(end.X - controlDst, end.Y);
+            if (isHorizontal)
+            {
+                float xOffset = Math.Sign(direction.X) * controlDst;
+                control1 = new Float2(start.X + xOffset, start.Y);
+                control2 = new Float2(end.X - xOffset, end.Y);
+            }
+            else
+            {
+                float yOffset = Math.Sign(direction.Y) * controlDst;
+                control1 = new Float2(start.X, start.Y + yOffset);
+                control2 = new Float2(end.X, end.Y - yOffset);
+            }
         }
 
         /// <summary>
@@ -139,7 +186,7 @@ namespace FlaxEditor.Surface.Elements
             Float2 offsetEnd = new Float2(end.X - connectionOffset, end.Y);
 
             float squaredDistance = distance;
-            CalculateBezierControlPoints(offsetStart, offsetEnd, out var control1, out var control2);
+            CalculateBezierControlPoints(offsetStart, offsetEnd, true, out var control1, out var control2);
 
             var d1 = control1 - offsetStart;
             var d2 = control2 - control1;
@@ -204,7 +251,7 @@ namespace FlaxEditor.Surface.Elements
                 if (targetBox.CurrentType.IsVoid)
                     highlight *= 2;
                 
-                DrawConnection(style, ref startPos, ref endPos, ref color, highlight);
+                DrawConnection(style, ref startPos, ref endPos, ref color, false, highlight);
             }
         }
 
@@ -218,7 +265,7 @@ namespace FlaxEditor.Surface.Elements
             var endPos = targetBox.ConnectionOrigin;
             var alpha = targetBox.Enabled && targetBox.IsActive ? 1.0f : 0.6f;
             var color = _currentTypeColor * alpha;
-            DrawConnection(Surface.Style, ref startPos, ref endPos, ref color, SelectedConnectionThickness);
+            DrawConnection(Surface.Style, ref startPos, ref endPos, ref color, false, SelectedConnectionThickness);
         }
 
         /// <inheritdoc />

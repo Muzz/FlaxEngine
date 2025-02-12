@@ -36,7 +36,7 @@ namespace FlaxEditor.Surface
         /// <param name="startPos">The start position.</param>
         /// <param name="endPos">The end position.</param>
         /// <param name="color">The color.</param>
-        void DrawConnectingLine(ref Float2 startPos, ref Float2 endPos, ref Color color);
+        void DrawConnectingLine(ref Float2 startPos, ref Float2 endPos, ref Color color, bool freefloating);
 
         /// <summary>
         /// Created the new connection with the specified other object.

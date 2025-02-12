@@ -522,8 +522,15 @@ namespace FlaxEditor.Surface.Elements
                 TooltipText = debuggerTooltip;
             }
 
+            // Don't change cursor if we're already in a dragging operation
+            if (!Surface.IsConnecting && Surface.CanEdit)
+            {
+                Cursor = Surface.CanEdit ? CursorType.Hand : CursorType.Default;
+            }
+
             base.OnMouseEnter(location);
         }
+
 
         /// <inheritdoc />
         public override bool OnMouseDown(Float2 location, MouseButton button)
@@ -547,6 +554,13 @@ namespace FlaxEditor.Surface.Elements
             {
                 TooltipText = _originalTooltipText;
             }
+
+            // Reset cursor unless we're dragging a connection
+            if (!Surface.IsConnecting)
+            {
+                Cursor = CursorType.Default;
+            }
+
             if (_isMouseDown)
             {
                 _isMouseDown = false;
@@ -736,9 +750,9 @@ namespace FlaxEditor.Surface.Elements
         }
 
         /// <inheritdoc />
-        public void DrawConnectingLine(ref Float2 startPos, ref Float2 endPos, ref Color color)
+        public void DrawConnectingLine(ref Float2 startPos, ref Float2 endPos, ref Color color, bool freefloating)
         {
-            OutputBox.DrawConnection(Surface.Style, ref startPos, ref endPos, ref color, OutputBox.ConnectingConnectionThickness);
+            OutputBox.DrawConnection(Surface.Style, ref startPos, ref endPos, ref color, freefloating, OutputBox.ConnectingConnectionThickness);
         }
 
         /// <inheritdoc />
