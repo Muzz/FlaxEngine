@@ -330,6 +330,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom");
 
     // Check if use bloom
+// Check if use bloom
     if (useBloom)
     {
         // Validate minimum dimensions
@@ -340,19 +341,28 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             return;
         }
 
+        // Optimal mip chain configuration
+        //const int32 BLOOM_MIP_COUNT = 5;  // Sweet spot between quality/performance
+
         // Pre-calculate mip sizes
         struct MipSize {
             int32 width;
             int32 height;
         };
-        MipSize mipSizes[6];  // Support up to 6 mips
+        MipSize mipSizes[BLOOM_MIP_COUNT];
         for (int32 i = 0; i < BLOOM_MIP_COUNT; i++)
         {
             mipSizes[i].width = w2 >> i;
             mipSizes[i].height = h2 >> i;
         }
 
-        // Combined threshold and source treatment pass
+        auto tempDesc = GPUTextureDescription::New2D(w2, h2, BLOOM_MIP_COUNT, output->Format(), GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
+        auto bloomTmp1 = RenderTargetPool::Get(tempDesc);
+        auto bloomTmp2 = RenderTargetPool::Get(tempDesc);
+        RENDER_TARGET_POOL_SET_NAME(bloomTmp1, "PostProcessing.Bloom1");
+        RENDER_TARGET_POOL_SET_NAME(bloomTmp2, "PostProcessing.Bloom2");
+
+        // Bright pass + initial downsample
         context->SetRenderTarget(bloomTmp1->View(0, 0));
         context->SetViewportAndScissors((float)mipSizes[0].width, (float)mipSizes[0].height);
         context->BindSR(0, input->View());
@@ -360,7 +370,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
-        // Kawase downscale chain
+        // Downsample chain
         for (int32 mip = 1; mip < BLOOM_MIP_COUNT; mip++)
         {
             context->SetRenderTarget(bloomTmp1->View(0, mip));
@@ -371,7 +381,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             context->ResetRenderTarget();
         }
 
-        // Kawase upscale chain
+        // Upsample chain with dual filtering
         for (int32 mip = BLOOM_MIP_COUNT - 2; mip >= 0; mip--)
         {
             GPUTexture* target = (mip % 2 == 0) ? bloomTmp2 : bloomTmp1;
@@ -384,14 +394,19 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             context->ResetRenderTarget();
         }
 
-        // Final result will be in bloomTmp2 since we end on mip 0 (even)
+        // Final output will be in bloomTmp2 since we end on mip 0 (even)
         context->BindSR(2, bloomTmp2);
+
+        // Cleanup
+        RenderTargetPool::Release(bloomTmp1);
+        RenderTargetPool::Release(bloomTmp2);
     }
     else
     {
         // No bloom texture
         context->UnBindSR(2);
     }
+
 
     ////////////////////////////////////////////////////////////////////////////////////
     // Lens Flares

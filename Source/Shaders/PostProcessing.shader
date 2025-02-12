@@ -272,86 +272,115 @@ float4 PS_Threshold(Quad_VS2PS input) : SV_Target
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 {
-    float3 color = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
+    float2 texelSize = InvInputSize;
+    float2 halfPixel = texelSize * 0.5f;
+
+    // Super-optimized 5-tap downsample + threshold
+    float3 color = 0;
+    float centerWeight = 4.0;
+    float cornerWeight = 1.0;
     
-    // Soft clipping for super-saturated colors
-    float softMax = 0.7;
-    float shoulder = 0.3;
-    float3 x = color / softMax;
-    float3 softClipped = (x * (1.0 + x/(shoulder*shoulder)))/(1.0 + x);
-    color = softClipped * softMax;
+    // Center (weighted 4x)
+    float3 center = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
+    color += center * centerWeight;
     
-    // More aggressive luminance threshold
+    // Corners (weighted 1x each)
+    float2 diagonal = float2(1.0, 1.0) * halfPixel;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + diagonal).rgb * cornerWeight;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord - diagonal).rgb * cornerWeight;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-diagonal.x, diagonal.y)).rgb * cornerWeight;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(diagonal.x, -diagonal.y)).rgb * cornerWeight;
+    
+    // Normalize
+    color /= (centerWeight + 4.0 * cornerWeight);
+
+    // Aggressive threshold with smooth falloff
     float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
+    float threshold = max(BloomThresholdStart, 0.2);
+    float knee = threshold * BloomThresholdSoftness * 0.5;
     
-    // Adjusted threshold calculation with stronger cutoff
-    float softness = BloomThresholdSoftness * 0.5; // Reduce softness range
-    float threshold = max(BloomThresholdStart, 0.2); // Enforce minimum threshold
-    float knee = threshold * softness;
-    
-    // More aggressive threshold curve
-    float softThreshold = saturate(
-        luminance > threshold + knee ? luminance - threshold :
-        luminance > threshold - knee ? pow(luminance - (threshold - knee), 2.0) / (4.0 * knee + 0.00001) :
-        0.0
-    );
-    
-    // Apply stronger initial cutoff
-    softThreshold *= step(0.1, softThreshold); // Remove very low values completely
-    
-    // Scale color by the threshold factor
-    color *= softThreshold;
-   
-    
+    float softness = smoothstep(threshold - knee, threshold + knee, luminance);
+    color *= softness;
+
+    // Soft clipping for super-bright areas
+    float softClip = BloomClampIntensity * 0.5;
+    color = 1.0 - exp(-color * softClip);
+
     return float4(color, 1.0);
 }
 
 META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target  // Upsample
+float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
 {
-    uint textureWidth, textureHeight;
-    Input0.GetDimensions(textureWidth, textureHeight);
-    float2 texelSize = 1.0 / float2(textureWidth, textureHeight);
+    float2 texelSize = InvInputSize;
     
-    // Calculate adaptive offset based on current resolution
-    // Smaller offset at higher resolutions for sharper details
-    float baseOffset = 1.5;
-    float resolutionScale = log2(max(textureWidth, textureHeight) / 256.0);
-    float offset = max(baseOffset - resolutionScale * 0.2, 0.5);
-    
-    float2 halfPixel = texelSize * offset;
-    
+    // 9-tap optimized tent filter
     float3 color = 0;
-    float totalWeight = 0;
-    float centerWeight = 1.0;
-    float cornerWeight = 0.75;
-    float crossWeight = 0.5;
+    
+    // Cross samples
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(0, texelSize.y)).rgb;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(0, -texelSize.y)).rgb;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(texelSize.x, 0)).rgb;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-texelSize.x, 0)).rgb;
+    
+    // Corner samples
+    float2 diagonal = texelSize * 0.7071; // 1/sqrt(2)
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + diagonal).rgb * 0.5;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord - diagonal).rgb * 0.5;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-diagonal.x, diagonal.y)).rgb * 0.5;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(diagonal.x, -diagonal.y)).rgb * 0.5;
     
     // Center sample
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb * centerWeight;
+    color += Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb * 2;
+    
+    return float4(color / 7, 1);
+}
+
+META_PS(true, FEATURE_LEVEL_ES2)
+float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
+{
+    float2 texelSize = InvInputSize;
+    float radius = BloomScatter * texelSize.x;
+
+    // Optimized 13-tap filter
+    float3 color = 0;
+    float totalWeight = 0;
+    
+    // Center
+    float3 centerColor = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
+    float centerWeight = 1.0;
+    color += centerColor * centerWeight;
     totalWeight += centerWeight;
+
+    // Inner ring - weighted higher
+    float innerWeight = 0.75;
+    float2 innerOffset = texelSize * radius * 0.75;
     
-    // Cross pattern (closer samples)
-    float3 crossSum = 0;
-    crossSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, 0)).rgb;
-    crossSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, 0)).rgb;
-    crossSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(0, halfPixel.y)).rgb;
-    crossSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(0, -halfPixel.y)).rgb;
-    color += crossSum * crossWeight;
-    totalWeight += crossWeight * 4;
+    for (int i = 0; i < 4; i++)
+    {
+        float angle = i * (3.14159 / 2.0);
+        float2 offset = float2(cos(angle), sin(angle)) * innerOffset;
+        color += Input0.Sample(SamplerLinearClamp, input.TexCoord + offset).rgb * innerWeight;
+        totalWeight += innerWeight;
+    }
+
+    // Outer ring - weighted lower
+    float outerWeight = 0.5;
+    float2 outerOffset = texelSize * radius * 1.5;
     
-    // Diagonal pattern (further samples)
-    float3 cornerSum = 0;
-    cornerSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, halfPixel.y)).rgb;
-    cornerSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, halfPixel.y)).rgb;
-    cornerSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, -halfPixel.y)).rgb;
-    cornerSum += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, -halfPixel.y)).rgb;
-    color += cornerSum * cornerWeight;
-    totalWeight += cornerWeight * 4;
-    
-    // Normalize
+    for (int j = 0; j < 8; j++)
+    {
+        float angle = j * (3.14159 / 4.0);
+        float2 offset = float2(cos(angle), sin(angle)) * outerOffset;
+        color += Input0.Sample(SamplerLinearClamp, input.TexCoord + offset).rgb * outerWeight;
+        totalWeight += outerWeight;
+    }
+
     color /= totalWeight;
-    
+
+    // Intensity adjustment
+    color *= BloomIntensity;
+
     // Blend with current mip if Input1 is bound
     uint width1, height1;
     Input1.GetDimensions(width1, height1);
@@ -359,65 +388,33 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target  // Upsample
     if (width1 > 0)
     {
         float3 currentMip = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-        
-        // Blend based on intensity to preserve bright details
-        float intensity = Luminance(currentMip);
-        float blend = smoothstep(0.2, 0.8, intensity);
-        
-        color = lerp(color, currentMip, blend * 0.7);
+        float blendFactor = smoothstep(0.3, 0.7, dot(currentMip, float3(0.2126, 0.7152, 0.0722)));
+        color = lerp(color, currentMip, blendFactor * 0.7);
     }
-    
+
     return float4(color, 1.0);
 }
 
-// Blend high-res and mip chain results
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BlendBloom(Quad_VS2PS input) : SV_Target
 {
-    float3 highRes = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-    float3 mipChain = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-    
-    // Blend based on intensity
-    float intensity = dot(highRes, float3(0.2126, 0.7152, 0.0722));
-    float blend = saturate(intensity * 2.0);
-    
-    float3 color = highRes * blend * 0.5 + mipChain * (1.0 - blend * 0.3);
-    
-    return float4(color, 1.0);
-}
+    float3 baseColor = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
+    float3 bloomColor = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
 
-
-META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target  // Downsample
-{
-    uint width, height;
-    Input0.GetDimensions(width, height);
-    float2 texelSize = 1.0 / float2(width, height);
+    // Adaptive bloom blend based on scene luminance
+    float sceneLuminance = dot(baseColor, float3(0.2126, 0.7152, 0.0722));
+    float bloomLuminance = dot(bloomColor, float3(0.2126, 0.7152, 0.0722));
     
-    float2 halfPixel = texelSize;
+    float adaptiveBlend = smoothstep(0.2, 0.8, sceneLuminance);
+    float bloomStrength = lerp(BloomIntensity, BloomIntensity * 0.7, adaptiveBlend);
     
-    // More symmetrical Kawase pattern
-    float3 color = 0;
+    // Apply bloom tint
+    bloomColor *= BloomTintColor;
     
-    // Center sample (weight: 4)
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb * 4.0;
+    // Screen blend mode
+    float3 result = 1.0 - (1.0 - baseColor) * (1.0 - bloomColor * bloomStrength);
     
-    // Cross pattern - closer samples (weight: 2 each)
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, 0)).rgb * 2.0;
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, 0)).rgb * 2.0;
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(0, halfPixel.y)).rgb * 2.0;
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(0, -halfPixel.y)).rgb * 2.0;
-    
-    // Diagonal pattern (weight: 1 each)
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, halfPixel.y)).rgb;
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, halfPixel.y)).rgb;
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, -halfPixel.y)).rgb;
-    color += Input0.Sample(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, -halfPixel.y)).rgb;
-    
-    // Normalize (total weight: 4 + 8 + 4 = 16)
-    color /= 16.0;
-    
-    return float4(color, 1.0);
+    return float4(result, 1.0);
 }
 
 // Horizontal gaussian blur
