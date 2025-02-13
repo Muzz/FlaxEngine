@@ -63,7 +63,7 @@ void SceneLightmapsData::UnloadLightmaps()
 {
     if (_lightmaps.HasItems())
     {
-        LOG(Info, "Unloding {0} lightmap(s)", _lightmaps.Count());
+        LOG(Info, "Unloading {0} lightmap(s)", _lightmaps.Count());
 
         _lightmaps.ClearDelete();
     }

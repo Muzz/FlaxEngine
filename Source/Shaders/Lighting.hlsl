@@ -13,6 +13,50 @@ ShadowSample GetShadow(LightData lightData, GBufferSample gBuffer, float4 shadow
     return shadow;
 }
 
+// Update the core BRDF functions first:
+float3 Diffuse_Disney(float3 diffuseColor, float roughness, float NoV, float NoL, float VoH)
+{
+    float FL = pow(1.0 - NoL, 5.0);
+    float FV = pow(1.0 - NoV, 5.0);
+    float Fretro = FL * FV;
+    
+    // Roughness-based retro-reflection
+    float rough = roughness;
+    float Dr = 1.0 + (0.5 + 0.5 * rough) * Fretro;
+    
+    return diffuseColor * Dr * (1.0 / PI);
+}
+
+float3 Diffuse_Frostbite(float3 diffuseColor, float roughness, float NoV, float NoL, float VoH)
+{
+    float energyBias = lerp(0, 0.5, roughness);
+    float energyFactor = lerp(1.0, 1.0 / 1.51, roughness);
+    float fd90 = energyBias + 2.0 * VoH * VoH * roughness;
+    float lightScatter = 1 + (fd90 - 1) * pow(1 - NoL, 5);
+    float viewScatter = 1 + (fd90 - 1) * pow(1 - NoV, 5);
+    return diffuseColor * lightScatter * viewScatter * energyFactor / PI;
+}
+
+float3 Diffuse_OrenNayar(float3 diffuseColor, float roughness, float NoV, float NoL, float VoH)
+{
+    float a = roughness * roughness;
+    float s = a;
+    float s2 = s * s;
+    float VoL = 2 * VoH * VoH - 1;
+    float Cosri = VoL - NoV * NoL;
+    float C1 = 1 - 0.5 * s2 / (s2 + 0.33);
+    float C2 = 0.45 * s2 / (s2 + 0.09) * Cosri * (Cosri >= 0 ? 1 / max(NoL, NoV) : 1);
+    return diffuseColor * max(0, NoL) * (C1 + C2) * (1 / PI);
+}
+
+float3 Diffuse_Burley(float3 diffuseColor, float roughness, float NoV, float NoL, float VoH)
+{
+    float FD90 = 0.5 + 2.0 * VoH * VoH * roughness;
+    float FdV = 1.0 + (FD90 - 1.0) * pow(1.0 - NoV, 5.0);
+    float FdL = 1.0 + (FD90 - 1.0) * pow(1.0 - NoL, 5.0);
+    return diffuseColor * ((FdV * FdL) / PI);
+}
+
 LightSample StandardShading(GBufferSample gBuffer, float energy, float3 L, float3 V, half3 N)
 {
     float3 diffuseColor = GetDiffuseColor(gBuffer);
@@ -23,11 +67,16 @@ LightSample StandardShading(GBufferSample gBuffer, float energy, float3 L, float
     float VoH = saturate(dot(V, H));
 
     LightSample lighting;
+    
     lighting.Diffuse = Diffuse_Lambert(diffuseColor);
-#if LIGHTING_NO_SPECULAR
-    lighting.Specular = 0;
-#else
+
+    //lighting.Diffuse = Diffuse_OrenNayar(diffuseColor, gBuffer.Roughness, NoV, NoL, VoH);
+
+    #if LIGHTING_NO_SPECULAR
+        lighting.Specular = 0;
+    #else
     float3 specularColor = GetSpecularColor(gBuffer);
+    
     float3 F = F_Schlick(specularColor, VoH);
     float D = D_GGX(gBuffer.Roughness, NoH) * energy;
     float Vis = Vis_SmithJointApprox(gBuffer.Roughness, NoV, NoL);
@@ -82,6 +131,8 @@ LightSample SurfaceShading(GBufferSample gBuffer, float energy, float3 L, float3
         return (LightSample)0;
     }
 }
+
+
 
 float4 GetSkyLightLighting(LightData lightData, GBufferSample gBuffer, TextureCube ibl)
 {
