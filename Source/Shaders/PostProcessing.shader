@@ -272,6 +272,7 @@ float4 PS_Threshold(Quad_VS2PS input) : SV_Target
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 {
+    //return float4(1.0, 1.0, 0.0, 1.0); // Bright red
     // Get dimensions for precise texel calculations
     uint width, height;
     Input0.GetDimensions(width, height);
@@ -330,7 +331,9 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 
     // Store threshold result in alpha for downsample chain
     return float4(clamped, luminance);
+
 }
+
 
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
@@ -450,6 +453,7 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
 
     return float4(color, 1.0);
 }
+
 
 
 // Horizontal gaussian blur
@@ -623,6 +627,7 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
 		color = Input0.Sample(SamplerLinearClamp, uv);
 	}
 
+    /*
 	// Lens Flares
 	BRANCH
 	if (LensFlareIntensity > 0)
@@ -641,99 +646,37 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
 		lensLight += lensFlares * 1.5f;
 		color.rgb += lensFlares;
 	}
+    */
 
 	// Bloom
     // Bloom with dual filtering upsample
-    
     BRANCH
     if (BloomIntensity > 0)
     {
-        uint textureWidth, textureHeight;
-        Input2.GetDimensions(textureWidth, textureHeight);
-        float2 textureSize = float2(textureWidth, textureHeight);
-        int maxMip = BloomMipCount - 1; // 5
+        // Sample the final bloom result from our single mip chain
+        float3 bloom = Input2.Sample(SamplerLinearClamp, input.TexCoord).rgb;
     
-        // Initialize with smallest mip (most blurred)
-        float3 bloom = Input2.SampleLevel(SamplerLinearClamp, input.TexCoord, maxMip).rgb;
-    
-        // Rescale scatter for wider range (0-1 becomes 0.1-2.0)
-        float adjustedScatter = lerp(0.1, 2.0, saturate(BloomScatter));
-    
-        float mipWeight = adjustedScatter;
-        float totalWeight = mipWeight;
-        bloom *= mipWeight;
-    
-        [unroll(6)]
-        for (int i = maxMip - 1; i >= 0; i--)
-        {
-            float2 mipTextureSize = textureSize * pow(0.5, i);
-            float2 halfPixel = 0.5 / mipTextureSize;
-
-            // Dual kawase sampling pattern (keeping original pattern)
-            float4 sum = Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x * 2.0, 0.0), i);
-            sum += Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, halfPixel.y), i) * 2.0;
-            sum += Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(0.0, halfPixel.y * 2.0), i);
-            sum += Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, halfPixel.y), i) * 2.0;
-            sum += Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x * 2.0, 0.0), i);
-            sum += Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(halfPixel.x, -halfPixel.y), i) * 2.0;
-            sum += Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(0.0, -halfPixel.y * 2.0), i);
-            sum += Input2.SampleLevel(SamplerLinearClamp, input.TexCoord + float2(-halfPixel.x, -halfPixel.y), i) * 2.0;
-
-            float3 currentMip = (sum.rgb / 12.0);
-        
-            //mipWeight = 1.0 / (adjustedScatter * (i + 1));
-            mipWeight = 1.0 / pow(adjustedScatter * (i + 1), 0.3);
-            totalWeight += mipWeight;
-        
-            bloom += currentMip * mipWeight;
-        }
-    
-        bloom /= totalWeight;
-
-        // Scale down the bloom intensity for better control
+        // Apply bloom intensity with better control
+        // Scale down the bloom intensity for better control (0.1 gives a good range)
         float adjustedIntensity = BloomIntensity * 0.1;
     
         // Add bloom while preserving bright source details
         color.rgb += bloom * adjustedIntensity;
     }
-	    // Lens Dirt
-	    float3 lensDirt = LensDirt.SampleLevel(SamplerLinearClamp, uv, 0).rgb;
-	    color.rgb += lensDirt * (lensLight * LensDirtIntensity);
 
-	    // Eye Adaptation post exposure
-	    color.rgb *= PostExposure;
-
-	    // Color Grading and Tone Mapping
-    #if !NO_GRADING_LUT
-	    color.rgb = ColorLookupTable(color.rgb);
-    #endif
-
-   
-    // way to preview mips
+    // The debug mip preview code could look like this if needed:
     BRANCH
     if (BloomIntensity > 0)
     {
-            if (false){
-            // Sample a specific mip level (0-5) directly
-            // Change this number to view different mip levels
-            const float MIP_TO_VIEW = 5; // Try values 0-5
-    
-            // Pick the right texture based on whether mip is even or odd
-            float3 bloom;
-            if (MIP_TO_VIEW % 2 == 0)
-            {
-                // Even mips are in bloomTmp2 (Input2)
-                bloom = Input2.SampleLevel(SamplerLinearClamp, input.TexCoord, MIP_TO_VIEW).rgb;
-            }
-            else
-            {
-                // Odd mips are in bloomTmp1 (Input1) 
-                bloom = Input1.SampleLevel(SamplerLinearClamp, input.TexCoord, MIP_TO_VIEW).rgb;
-            }
-    
+        if (true) // Debug switch
+        {
+            // Sample a specific mip level for preview
+            const float MIP_TO_VIEW = 4; // Try values 0-5
+            float3 bloom = Input2.SampleLevel(SamplerLinearClamp, input.TexCoord, MIP_TO_VIEW).rgb;
+            //float3 bloom = Input2.Sample(SamplerLinearClamp, input.TexCoord).rgb;
             // Output just this mip level
-            color.rgb = bloom;
-           }
+            color.rgb = bloom * 0.1;
+        }
     }
 
 	// Film Grain
