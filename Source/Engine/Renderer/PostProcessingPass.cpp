@@ -189,6 +189,25 @@ void PostProcessingPass::Dispose()
     _defaultLensStar = nullptr;
 }
 
+float CalculateBloomMipCount(int32 width, int32 height)
+{
+    // Calculate the smallest dimension
+    int32 minDimension = Math::Min(width, height);
+
+    // Calculate how many times we can half the dimension until we hit a minimum size
+    // (e.g., 16x16 pixels as the smallest mip)
+    const int32 MIN_MIP_SIZE = 16;
+    float mipCount = 1.0f;
+
+    while (minDimension > MIN_MIP_SIZE) {
+        minDimension /= 2;
+        mipCount += 1.0f;
+    }
+
+
+    return mipCount;
+}
+
 void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input, GPUTexture* output, GPUTexture* colorGradingLUT)
 {
     PROFILE_GPU_CPU("Post Processing");
@@ -214,7 +233,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     int32 h4 = h2 >> 1;
     int32 h8 = h4 >> 1;
 
-    const int32 BLOOM_MIP_COUNT = 6; // Controls number of mip levels for bloom
+    int32 bloomMipCount = CalculateBloomMipCount(w1, h1);
 
     // Ensure to have valid data and if at least one effect should be applied
     if (!(useBloom || useToneMapping || useCameraArtifacts) || checkIfSkipPass() || w8 == 0 || h8 ==0)
@@ -263,7 +282,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         data.BloomScatter = Math::Max(settings.Bloom.Scatter, 0.000001f);
         data.BloomTintColor = (Float3)settings.Bloom.TintColor;
         data.BloomClampIntensity = settings.Bloom.ClampIntensity;
-        data.BloomMipCount = BLOOM_MIP_COUNT;
+        data.BloomMipCount = bloomMipCount;
         data.BloomPadding = Float3(0.0f, 0.0f, 0.0f);
     }
     else
@@ -315,64 +334,63 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     // Bloom
 
     
-    auto tempDesc = GPUTextureDescription::New2D(w2, h2, BLOOM_MIP_COUNT, output->Format(), GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
-    auto bloomBuffer = RenderTargetPool::Get(tempDesc);
-    RENDER_TARGET_POOL_SET_NAME(bloomBuffer, "PostProcessing.Bloom");
+    auto tempDesc = GPUTextureDescription::New2D(w2, h2, bloomMipCount, output->Format(), GPUTextureFlags::ShaderResource | GPUTextureFlags::RenderTarget | GPUTextureFlags::PerMipViews);
+    auto bloomBuffer1 = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(bloomBuffer1, "PostProcessing.Bloom");
+    auto bloomBuffer2 = RenderTargetPool::Get(tempDesc);
+    RENDER_TARGET_POOL_SET_NAME(bloomBuffer2, "PostProcessing.Bloom");
 
-    //for (int32 mip = 0; mip < BLOOM_MIP_COUNT; mip++)
-    //{
-    //    const float mipWidth = w2 >> mip;
-    //    const float mipHeight = h2 >> mip;
-    //    LOG(Info, "Mip {0}: {1}x{2}", mip, mipWidth, mipHeight);
-    //}
-
-    for (int32 mip = 0; mip < BLOOM_MIP_COUNT; mip++)
+    for (int32 mip = 0; mip < bloomMipCount; mip++)
     {
-        context->Clear(bloomBuffer->View(0, mip), Color::Transparent);
+        context->Clear(bloomBuffer1->View(0, mip), Color::Transparent);
+        context->Clear(bloomBuffer2->View(0, mip), Color::Transparent);
     }
 
     // Check if use bloom
     if (useBloom)
     {
-
-        context->SetRenderTarget(bloomBuffer->View(0, 0));
+        // Initial bright pass - store in bloomBuffer1 mip 0
+        context->SetRenderTarget(bloomBuffer1->View(0, 0));
         context->SetViewportAndScissors((float)w2, (float)h2);
         context->BindSR(0, input->View());
         context->SetState(_psBloomBrightPass);
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
-        // Progressive downsamples
-        for (int32 mip = 1; mip < BLOOM_MIP_COUNT; mip++)
+        // Progressive downsamples - fill bloomBuffer1's mip chain
+        for (int32 mip = 1; mip < bloomMipCount; mip++)
         {
             const float mipWidth = w2 >> mip;
             const float mipHeight = h2 >> mip;
-
-            context->SetRenderTarget(bloomBuffer->View(0, mip));
+            context->SetRenderTarget(bloomBuffer1->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);
-            context->BindSR(0, bloomBuffer->View(0, mip - 1));
+            context->BindSR(0, bloomBuffer1->View(0, mip - 1));
             context->SetState(_psBloomDownsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
-         
         }
 
-        // Progressive upsamples
-        for (int32 mip = BLOOM_MIP_COUNT - 2; mip >= 0; mip--)
+        // Progressive upsamples - store results in bloomBuffer2
+        for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
         {
             const float mipWidth = w2 >> mip;
             const float mipHeight = h2 >> mip;
 
-            context->SetRenderTarget(bloomBuffer->View(0, mip));
+            // Set target as current mip level in bloomBuffer2
+            context->SetRenderTarget(bloomBuffer2->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);
-            context->BindSR(0, bloomBuffer->View(0, mip + 1));
+
+            // Bind previous result from bloomBuffer2 and original chain from bloomBuffer1
+            context->BindSR(0, bloomBuffer2->View(0, mip + 1));  // Previous upsampled result
+            context->BindSR(1, bloomBuffer1);                    // Original downsample chain
+
             context->SetState(_psBloomDualFilterUpsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
         }
 
-        // Final composite
-        context->BindSR(2, bloomBuffer);
+        // Bind final result for composite pass
+        context->BindSR(2, bloomBuffer2);
     }
     else
     {
@@ -473,5 +491,6 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     context->DrawFullscreenTriangle();
 
     // Cleanup
-    RenderTargetPool::Release(bloomBuffer);
+    RenderTargetPool::Release(bloomBuffer1);
+    RenderTargetPool::Release(bloomBuffer2);
 }

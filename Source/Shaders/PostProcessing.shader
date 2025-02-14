@@ -394,8 +394,9 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     // Maintain fixed scale through mip chain
     float2 scale = float2(2.0, 2.0);
     float baseOffset = 1.0;
-    float offsetScale =  (BloomScatter)  * baseOffset;
+    float offsetScale = BloomScatter * baseOffset;
 
+    // Sample current mip level with tent filter
     float3 color = 0;
     float totalWeight = 0;
 
@@ -441,17 +442,23 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
 
     color /= totalWeight;
 
-    // Blend with previous mip using fixed ratio
-    uint width1, height1;
-    Input1.GetDimensions(width1, height1);
-    BRANCH
-    if (width1 > 0)
+    // Sample all previous mip levels from Input1 (full mip chain)
+    float currentMipLevel = log2(width/InputSize.x) + 1.0;
+    float3 accum = color;
+    float accumWeight = 1.0;
+    
+    // Sample previous mips
+    for(float mip = currentMipLevel + 1.0; mip < BloomMipCount; mip += 1.0)
     {
-        float3 previousMip = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-        color = lerp(color, previousMip, 0.25); // Fixed blend weight for stability
+        float relativeScale = pow(2.0, mip - currentMipLevel);
+        float weight = pow(BloomScatter, mip - currentMipLevel);
+        
+        float3 mipSample = Input1.SampleLevel(SamplerLinearClamp, input.TexCoord, mip).rgb;
+        accum += mipSample * weight;
+        accumWeight += weight;
     }
 
-    return float4(color, 1.0);
+    return float4(accum / accumWeight, 1.0);
 }
 
 
@@ -660,24 +667,62 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
         // Scale down the bloom intensity for better control (0.1 gives a good range)
         float adjustedIntensity = BloomIntensity * 0.1;
     
+    
         // Add bloom while preserving bright source details
         color.rgb += bloom * adjustedIntensity;
     }
 
-    // The debug mip preview code could look like this if needed:
+	// Lens Dirt
+	float3 lensDirt = LensDirt.SampleLevel(SamplerLinearClamp, uv, 0).rgb;
+	color.rgb += lensDirt * (lensLight * LensDirtIntensity);
+
+	// Eye Adaptation post exposure
+	color.rgb *= PostExposure;
+
+	// Color Grading and Tone Mapping
+#if !NO_GRADING_LUT
+	color.rgb = ColorLookupTable(color.rgb);
+#endif
+
+    // Inside PS_Composite, near the bloom section:
     BRANCH
     if (BloomIntensity > 0)
     {
-        if (true) // Debug switch
+        if (false)
         {
-            // Sample a specific mip level for preview
-            const float MIP_TO_VIEW = 4; // Try values 0-5
-            float3 bloom = Input2.SampleLevel(SamplerLinearClamp, input.TexCoord, MIP_TO_VIEW).rgb;
-            //float3 bloom = Input2.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-            // Output just this mip level
-            color.rgb = bloom * 0.1;
+            if (uv.x < 0.5) // Left quarter of screen for debug view
+            {
+                // Split into left/right quarters for buffer1/buffer2
+                bool showingBuffer1 = uv.x < 0.25;
+                float2 debugUV = uv;
+                debugUV.x = (debugUV.x - (showingBuffer1 ? 0.0 : 0.25)) * 4.0; // Rescale UV to fit quarter
+
+                // Calculate which mip to show based on vertical position
+                float mipLevel = floor(debugUV.y * BloomMipCount);
+        
+                // Sample from either Input2 (buffer1) or Input1 (buffer2) depending on position
+                float3 debugBloom;
+                if (showingBuffer1)
+                    debugBloom = Input1.SampleLevel(SamplerLinearClamp, debugUV, mipLevel).rgb;
+                else
+                    debugBloom = Input2.SampleLevel(SamplerLinearClamp, debugUV, mipLevel).rgb;
+        
+                // Boost the values to make them more visible
+                color.rgb = debugBloom * 0.001;
+        
+                // Add visual separator lines between mips
+                if (abs(frac(debugUV.y * BloomMipCount) - 1.0) < 0.01)
+                    color.rgb = float3(1, 0, 0); // Horizontal mip separators
+            
+                // Add vertical separator between buffers
+                if (abs(uv.x - 0.25) < 0.002)
+                    color.rgb = float3(0, 1, 0);
+            
+                return float4(color.rgb, 1.0);
+            }
         }
     }
+
 
 	// Film Grain
 	BRANCH
