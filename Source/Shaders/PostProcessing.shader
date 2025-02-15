@@ -412,6 +412,134 @@ float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
 {
+
+    uint width, height;
+    Input0.GetDimensions(width, height);
+    float2 texelSize = 1.0 / float2(width, height);
+        
+    // Maintain fixed scale through mip chain
+    float2 scale = float2(2.0, 2.0);
+    float baseOffset = 1.0;
+    float offsetScale =  (1.0)  * baseOffset;
+
+    float3 color = 0;
+    float totalWeight = 0;
+
+    // Center
+    float4 center = Input0.Sample(SamplerLinearClamp, input.TexCoord);
+    float centerWeight = 4.0;
+    color += center.rgb * centerWeight;
+    totalWeight += centerWeight;
+
+    // Cross - fixed distance samples
+    float2 crossOffsets[4] = {
+        float2(offsetScale, 0),
+        float2(-offsetScale, 0),
+        float2(0, offsetScale),
+        float2(0, -offsetScale)
+    };
+
+    UNROLL
+    for (int i = 0; i < 4; i++)
+    {
+        float4 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + crossOffsets[i] * texelSize);
+        float weight = 2.0;
+        color += sample.rgb * weight;
+        totalWeight += weight;
+    }
+
+    // Corners - fixed distance samples
+    float2 cornerOffsets[4] = {
+        float2(offsetScale, offsetScale),
+        float2(-offsetScale, offsetScale),
+        float2(offsetScale, -offsetScale),
+        float2(-offsetScale, -offsetScale)
+    };
+
+    UNROLL
+    for (int j = 0; j < 4; j++)
+    {
+        float4 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + cornerOffsets[j] * texelSize);
+        float weight = 1.0;
+        color += sample.rgb * weight;
+        totalWeight += weight;
+    }
+    
+
+    color /= totalWeight;
+    
+    // Blend with previous mip using fixed ratio
+    
+    uint width1, height1;
+    Input1.GetDimensions(width1, height1);
+    BRANCH
+    if (width1 > 0)
+    {
+        float3 previousMip = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
+        color = lerp(color, previousMip, 0.25); // Fixed blend weight for stability
+    }
+    
+
+    //color += Input1.Sample(SamplerLinearClamp, input.TexCoord);
+    
+    return float4(color, 1.0);
+}
+
+/* old
+META_PS(true, FEATURE_LEVEL_ES2)
+float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
+{
+    uint width, height;
+    Input0.GetDimensions(width, height);
+    float2 texelSize = 1.0 / float2(width, height);
+
+    // 9-tap tent filter with fixed weights
+    float3 color = 0;
+    float totalWeight = 0;
+
+    // Sample offsets (fixed)
+    const float2 offsets[9] = {
+        float2( 0,  0),    // Center
+        float2(-1, -1),    // Corners
+        float2( 1, -1),
+        float2(-1,  1),
+        float2( 1,  1),
+        float2( 0, -1),    // Cross
+        float2(-1,  0),
+        float2( 1,  0),
+        float2( 0,  1)
+    };
+
+    // Sample weights (fixed)
+    const float weights[9] = {
+        4.0,    // Center
+        1.0,    // Corners
+        1.0,
+        1.0,
+        1.0,
+        2.0,    // Cross
+        2.0,
+        2.0,
+        2.0
+    };
+
+    UNROLL
+    for (int i = 0; i < 9; i++)
+    {
+        float2 offset = offsets[i] * texelSize * 2.0; // Fixed scale factor for stability
+        float4 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + offset);
+        color += sample.rgb * weights[i];
+        totalWeight += weights[i];
+    }
+
+    return float4(color / totalWeight, 1.0);
+}
+*/
+/*
+old 
+META_PS(true, FEATURE_LEVEL_ES2)
+float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
+{
     uint width, height;
     Input0.GetDimensions(width, height);
     float2 texelSize = 1.0 / float2(width, height);
@@ -485,6 +613,7 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
 
     return float4(accum / accumWeight, 1.0);
 }
+*/
 
 
 
@@ -715,7 +844,7 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
     BRANCH
     if (BloomIntensity > 0)
     {
-        if (true)
+        if (false)
         {
             if (uv.x < 0.5) // Left quarter of screen for debug view
             {
@@ -735,7 +864,7 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
                     debugBloom = Input2.SampleLevel(SamplerLinearClamp, debugUV, mipLevel).rgb;
         
                 // Boost the values to make them more visible
-                color.rgb = debugBloom * 0.01;
+                color.rgb = debugBloom * 0.1;
         
                 // Add visual separator lines between mips
                 if (abs(frac(debugUV.y * BloomMipCount) - 1.0) < 0.01)

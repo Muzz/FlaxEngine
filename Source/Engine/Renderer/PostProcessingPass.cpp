@@ -347,10 +347,81 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         context->Clear(bloomBuffer2->View(0, mip), Color::Transparent);
     }
 
+    //// Check if use bloom
+    //if (useBloom)
+    //{
+    //    // Initial bright pass - store in bloomBuffer1 mip 0
+    //    context->SetRenderTarget(bloomBuffer1->View(0, 0));
+    //    context->SetViewportAndScissors((float)w2, (float)h2);
+    //    context->BindSR(0, input->View());
+    //    context->SetState(_psBloomBrightPass);
+    //    context->DrawFullscreenTriangle();
+    //    context->ResetRenderTarget();
+
+    //    // Progressive downsamples - fill bloomBuffer1's mip chain
+    //    for (int32 mip = 1; mip < bloomMipCount; mip++)
+    //    {
+    //        const float mipWidth = w2 >> mip;
+    //        const float mipHeight = h2 >> mip;
+    //        context->SetRenderTarget(bloomBuffer1->View(0, mip));
+    //        context->SetViewportAndScissors(mipWidth, mipHeight);
+    //        context->BindSR(0, bloomBuffer1->View(0, mip - 1));
+    //        context->SetState(_psBloomDownsample);
+    //        context->DrawFullscreenTriangle();
+    //        context->ResetRenderTarget();
+    //    }
+
+    //    //// Progressive upsamples - store results in bloomBuffer2
+    //    //for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
+    //    //{
+    //    //    const float mipWidth = w2 >> mip;
+    //    //    const float mipHeight = h2 >> mip;
+
+    //    //    // Set target as current mip level in bloomBuffer2
+    //    //    context->SetRenderTarget(bloomBuffer2->View(0, mip));
+    //    //    context->SetViewportAndScissors(mipWidth, mipHeight);
+
+    //    //    // Bind previous result from bloomBuffer2 and original chain from bloomBuffer1
+    //    //    context->BindSR(0, bloomBuffer2->View(0, mip + 1));  // Previous upsampled result
+    //    //    context->BindSR(1, bloomBuffer1);                    // Original downsample chain
+
+    //    //    context->SetState(_psBloomDualFilterUpsample);
+    //    //    context->DrawFullscreenTriangle();
+    //    //    context->ResetRenderTarget();
+    //    //}
+
+    //    // Progressive upsamples - store results in bloomBuffer2 
+    //    for (int32 mip = bloomMipCount - 2; mip >= 0; mip--) {
+    //        const float mipWidth = w2 >> mip;
+    //        const float mipHeight = h2 >> mip;
+
+    //        context->SetRenderTarget(bloomBuffer2->View(0, mip));
+    //        context->SetViewportAndScissors(mipWidth, mipHeight);
+
+    //        // Bind previous result from bloomBuffer2
+    //        context->BindSR(0, bloomBuffer2->View(0, mip + 1));
+
+    //        // Bind corresponding level from downsample chain
+    //        context->BindSR(1, bloomBuffer1->View(0, mip));
+
+    //        context->SetState(_psBloomDualFilterUpsample);
+    //        context->DrawFullscreenTriangle();
+    //        context->ResetRenderTarget();
+    //    }
+
+    //    // Bind final result for composite pass
+    //    context->BindSR(2, bloomBuffer2);
+    //}
+    //else
+    //{
+    //    context->UnBindSR(2);
+    //}
+
+
     // Check if use bloom
     if (useBloom)
     {
-        // Initial bright pass - store in bloomBuffer1 mip 0
+
         context->SetRenderTarget(bloomBuffer1->View(0, 0));
         context->SetViewportAndScissors((float)w2, (float)h2);
         context->BindSR(0, input->View());
@@ -358,65 +429,56 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         context->DrawFullscreenTriangle();
         context->ResetRenderTarget();
 
-        // Progressive downsamples - fill bloomBuffer1's mip chain
+        // Progressive downsamples
         for (int32 mip = 1; mip < bloomMipCount; mip++)
         {
             const float mipWidth = w2 >> mip;
             const float mipHeight = h2 >> mip;
+
             context->SetRenderTarget(bloomBuffer1->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);
             context->BindSR(0, bloomBuffer1->View(0, mip - 1));
             context->SetState(_psBloomDownsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
+
         }
 
-        //// Progressive upsamples - store results in bloomBuffer2
-        //for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
-        //{
-        //    const float mipWidth = w2 >> mip;
-        //    const float mipHeight = h2 >> mip;
+        // ok here is the idea. 
+        // we have the downsample chain. 
+        //// but we need to reverse iterate through, scale up 
 
-        //    // Set target as current mip level in bloomBuffer2
-        //    context->SetRenderTarget(bloomBuffer2->View(0, mip));
-        //    context->SetViewportAndScissors(mipWidth, mipHeight);
+        // Progressive upsamples
+        for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
+        {
+            auto upscalebuffer = bloomBuffer2;
+            if (mip == bloomMipCount - 2)
+            {
+                // if it's the first, copy the chain over. 
+                upscalebuffer = bloomBuffer1;
 
-        //    // Bind previous result from bloomBuffer2 and original chain from bloomBuffer1
-        //    context->BindSR(0, bloomBuffer2->View(0, mip + 1));  // Previous upsampled result
-        //    context->BindSR(1, bloomBuffer1);                    // Original downsample chain
+            }
 
-        //    context->SetState(_psBloomDualFilterUpsample);
-        //    context->DrawFullscreenTriangle();
-        //    context->ResetRenderTarget();
-        //}
-
-        // Progressive upsamples - store results in bloomBuffer2 
-        for (int32 mip = bloomMipCount - 2; mip >= 0; mip--) {
             const float mipWidth = w2 >> mip;
             const float mipHeight = h2 >> mip;
 
             context->SetRenderTarget(bloomBuffer2->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);
-
-            // Bind previous result from bloomBuffer2
-            context->BindSR(0, bloomBuffer2->View(0, mip + 1));
-
-            // Bind corresponding level from downsample chain
-            context->BindSR(1, bloomBuffer1->View(0, mip));
-
+            context->BindSR(0, upscalebuffer->View(0, mip + 1));
+            context->BindSR(1, bloomBuffer1->View(0, mip + 1)); // we're going to paste this in
             context->SetState(_psBloomDualFilterUpsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();
         }
 
-        // Bind final result for composite pass
+        // Final composite
+        context->BindSR(1, bloomBuffer1);
         context->BindSR(2, bloomBuffer2);
     }
     else
     {
         context->UnBindSR(2);
     }
-
 
     ////////////////////////////////////////////////////////////////////////////////////
     // Lens Flares
