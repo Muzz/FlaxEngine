@@ -36,16 +36,15 @@
 
 META_CB_BEGIN(0, Data)
 
-
 // New bloom parameters
-float BloomIntensity;
+float BloomIntensity;             // Overall bloom strength multiplier
+float BloomClampIntensity;        // safety control
+float BloomSpreadBalance;         // 0 = tight core bloom, 1 = wide soft bloom
+float BloomHighlightScale;        // Extra multiplier for very bright pixels
+float BloomFalloffSoftness;       // Controls how gradually the bloom effect fades
 float BloomThresholdStart;
 float BloomThresholdSoftness;
-float BloomScatter;
-float3 BloomTintColor;
-float BloomClampIntensity;
 float BloomMipCount; 
-float3 BloomPadding;
 
 
 float3 VignetteColor;
@@ -334,6 +333,32 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 
 }
 
+// Core intensity curve
+float3 CalculateBloomPixelIntensity(float3 color) {
+    // Natural light falloff (inverse square)
+    float3 normalizedPixels = color / (color + 1.0);
+    
+    // Bright pixel enhancement with natural decay
+    float3 brightPixelBoost = pow(normalizedPixels, float3(2.0, 2.0, 2.0)) * BloomHighlightScale;
+    
+    // Combine with main strength
+    return normalizedPixels * BloomIntensity + brightPixelBoost;
+}
+
+// Mip level weighting that controls bloom spread
+float CalculateMipLevelWeight(float currentMipLevel, float totalMipLevels) {
+    float mipProgressNormalized = currentMipLevel / totalMipLevels;
+    
+    // Concentrated bloom - rapid distance falloff
+    float concentratedWeight = exp(-mipProgressNormalized * 4.0);
+    
+    // Dispersed bloom - gradual distance falloff
+    float dispersedWeight = pow(1.0 - mipProgressNormalized, 1.5);
+    
+    // Blend between concentrated and dispersed based on spread balance
+    return lerp(concentratedWeight, dispersedWeight, BloomSpreadBalance) * BloomFalloffSoftness;
+}
+
 
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
@@ -394,7 +419,7 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     // Maintain fixed scale through mip chain
     float2 scale = float2(2.0, 2.0);
     float baseOffset = 1.0;
-    float offsetScale = BloomScatter * baseOffset;
+    float offsetScale = 1.0f * baseOffset;
 
     // Sample current mip level with tent filter
     float3 color = 0;
@@ -451,7 +476,7 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     for(float mip = currentMipLevel + 1.0; mip < BloomMipCount; mip += 1.0)
     {
         float relativeScale = pow(2.0, mip - currentMipLevel);
-        float weight = pow(BloomScatter, mip - currentMipLevel);
+        float weight = pow(1.0f, mip - currentMipLevel);
         
         float3 mipSample = Input1.SampleLevel(SamplerLinearClamp, input.TexCoord, mip).rgb;
         accum += mipSample * weight;
@@ -588,6 +613,8 @@ float nrand(float2 n)
 	return frac(sin(dot(n.xy, float2(12.9898, 78.233)))* 43758.5453);
 }
 
+
+
 // Applies exposure, color grading and tone mapping to the input.
 // Combines it with the results of the bloom pass and other postFx.
 META_PS(true, FEATURE_LEVEL_ES2)
@@ -688,7 +715,7 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
     BRANCH
     if (BloomIntensity > 0)
     {
-        if (false)
+        if (true)
         {
             if (uv.x < 0.5) // Left quarter of screen for debug view
             {
@@ -708,7 +735,7 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
                     debugBloom = Input2.SampleLevel(SamplerLinearClamp, debugUV, mipLevel).rgb;
         
                 // Boost the values to make them more visible
-                color.rgb = debugBloom * 0.001;
+                color.rgb = debugBloom * 0.01;
         
                 // Add visual separator lines between mips
                 if (abs(frac(debugUV.y * BloomMipCount) - 1.0) < 0.01)

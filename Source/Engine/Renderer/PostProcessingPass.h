@@ -16,14 +16,14 @@ class PostProcessingPass : public RendererPass<PostProcessingPass>
 private:
 
     GPU_CB_STRUCT(Data {
-        float BloomIntensity;
+        float BloomIntensity;             // Overall bloom strength multiplier
+        float BloomClampIntensity;        // safety control
+        float BloomSpreadBalance;         // 0 = tight core bloom, 1 = wide soft bloom
+        float BloomHighlightScale;        // Extra multiplier for very bright pixels
+        float BloomFalloffSoftness;       // Controls how gradually the bloom effect fades
         float BloomThresholdStart;
         float BloomThresholdSoftness;
-        float BloomScatter;
-        Float3 BloomTintColor;
-        float BloomClampIntensity;
         float BloomMipCount;
-        Float3 BloomPadding;
 
         Float3 VignetteColor;
         float VignetteShapeFactor;

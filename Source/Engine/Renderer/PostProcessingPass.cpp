@@ -277,13 +277,14 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     if (useBloom)
     {
         data.BloomIntensity = settings.Bloom.Intensity;
-        data.BloomThresholdStart = settings.Bloom.ThresholdStart;
-        data.BloomThresholdSoftness = settings.Bloom.ThresholdSoftness;
-        data.BloomScatter = Math::Max(settings.Bloom.Scatter, 0.000001f);
-        data.BloomTintColor = (Float3)settings.Bloom.TintColor;
-        data.BloomClampIntensity = settings.Bloom.ClampIntensity;
+        data.BloomSpreadBalance = settings.Bloom.BloomSpreadBalance;         // 0 = tight core bloom, 1 = wide soft bloom
+        data.BloomClampIntensity = settings.Bloom.BloomClampIntensity;
+        data.BloomThresholdStart = settings.Bloom.BloomThresholdStart;
+        data.BloomThresholdSoftness = settings.Bloom.BloomThresholdSoftness;
+        data.BloomHighlightScale = settings.Bloom.BloomHighlightScale;        // Extra multiplier for very bright pixels
+        data.BloomFalloffSoftness = settings.Bloom.BloomFalloffSoftness;       // Controls how gradually the bloom effect fades
         data.BloomMipCount = bloomMipCount;
-        data.BloomPadding = Float3(0.0f, 0.0f, 0.0f);
+
     }
     else
     {
@@ -370,19 +371,38 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             context->ResetRenderTarget();
         }
 
-        // Progressive upsamples - store results in bloomBuffer2
-        for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
-        {
+        //// Progressive upsamples - store results in bloomBuffer2
+        //for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
+        //{
+        //    const float mipWidth = w2 >> mip;
+        //    const float mipHeight = h2 >> mip;
+
+        //    // Set target as current mip level in bloomBuffer2
+        //    context->SetRenderTarget(bloomBuffer2->View(0, mip));
+        //    context->SetViewportAndScissors(mipWidth, mipHeight);
+
+        //    // Bind previous result from bloomBuffer2 and original chain from bloomBuffer1
+        //    context->BindSR(0, bloomBuffer2->View(0, mip + 1));  // Previous upsampled result
+        //    context->BindSR(1, bloomBuffer1);                    // Original downsample chain
+
+        //    context->SetState(_psBloomDualFilterUpsample);
+        //    context->DrawFullscreenTriangle();
+        //    context->ResetRenderTarget();
+        //}
+
+        // Progressive upsamples - store results in bloomBuffer2 
+        for (int32 mip = bloomMipCount - 2; mip >= 0; mip--) {
             const float mipWidth = w2 >> mip;
             const float mipHeight = h2 >> mip;
 
-            // Set target as current mip level in bloomBuffer2
             context->SetRenderTarget(bloomBuffer2->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);
 
-            // Bind previous result from bloomBuffer2 and original chain from bloomBuffer1
-            context->BindSR(0, bloomBuffer2->View(0, mip + 1));  // Previous upsampled result
-            context->BindSR(1, bloomBuffer1);                    // Original downsample chain
+            // Bind previous result from bloomBuffer2
+            context->BindSR(0, bloomBuffer2->View(0, mip + 1));
+
+            // Bind corresponding level from downsample chain
+            context->BindSR(1, bloomBuffer1->View(0, mip));
 
             context->SetState(_psBloomDualFilterUpsample);
             context->DrawFullscreenTriangle();
