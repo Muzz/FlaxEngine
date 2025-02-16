@@ -47,6 +47,7 @@ float BloomThresholdSoftness;
 float BloomMipCount; 
 
 
+
 float3 VignetteColor;
 float VignetteShapeFactor;
 
@@ -333,31 +334,7 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 
 }
 
-// Core intensity curve
-float3 CalculateBloomPixelIntensity(float3 color) {
-    // Natural light falloff (inverse square)
-    float3 normalizedPixels = color / (color + 1.0);
-    
-    // Bright pixel enhancement with natural decay
-    float3 brightPixelBoost = pow(normalizedPixels, float3(2.0, 2.0, 2.0)) * BloomHighlightScale;
-    
-    // Combine with main strength
-    return normalizedPixels * BloomIntensity + brightPixelBoost;
-}
 
-// Mip level weighting that controls bloom spread
-float CalculateMipLevelWeight(float currentMipLevel, float totalMipLevels) {
-    float mipProgressNormalized = currentMipLevel / totalMipLevels;
-    
-    // Concentrated bloom - rapid distance falloff
-    float concentratedWeight = exp(-mipProgressNormalized * 4.0);
-    
-    // Dispersed bloom - gradual distance falloff
-    float dispersedWeight = pow(1.0 - mipProgressNormalized, 1.5);
-    
-    // Blend between concentrated and dispersed based on spread balance
-    return lerp(concentratedWeight, dispersedWeight, BloomSpreadBalance) * BloomFalloffSoftness;
-}
 
 
 META_PS(true, FEATURE_LEVEL_ES2)
@@ -412,7 +389,8 @@ float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
 {
-
+    float anisotropy = 0.0; 
+    
     uint width, height;
     Input0.GetDimensions(width, height);
     float2 texelSize = 1.0 / float2(width, height);
@@ -421,24 +399,20 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     float2 scale = float2(2.0, 2.0);
     float baseOffset = 1.0;
     float offsetScale =  (1.0)  * baseOffset;
-
     float3 color = 0;
     float totalWeight = 0;
-
     // Center
     float4 center = Input0.Sample(SamplerLinearClamp, input.TexCoord);
     float centerWeight = 4.0;
     color += center.rgb * centerWeight;
     totalWeight += centerWeight;
-
     // Cross - fixed distance samples
     float2 crossOffsets[4] = {
-        float2(offsetScale, 0),
-        float2(-offsetScale, 0),
+        float2(offsetScale * anisotropy, 0),  // Modified
+        float2(-offsetScale * anisotropy, 0), // Modified
         float2(0, offsetScale),
         float2(0, -offsetScale)
     };
-
     UNROLL
     for (int i = 0; i < 4; i++)
     {
@@ -447,15 +421,13 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
         color += sample.rgb * weight;
         totalWeight += weight;
     }
-
     // Corners - fixed distance samples
     float2 cornerOffsets[4] = {
-        float2(offsetScale, offsetScale),
-        float2(-offsetScale, offsetScale),
-        float2(offsetScale, -offsetScale),
-        float2(-offsetScale, -offsetScale)
+        float2(offsetScale * anisotropy, offsetScale),  // Modified
+        float2(-offsetScale * anisotropy, offsetScale), // Modified
+        float2(offsetScale * anisotropy, -offsetScale), // Modified
+        float2(-offsetScale * anisotropy, -offsetScale) // Modified
     };
-
     UNROLL
     for (int j = 0; j < 4; j++)
     {
@@ -465,7 +437,6 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
         totalWeight += weight;
     }
     
-
     color /= totalWeight;
     
     // Blend with previous mip using fixed ratio
@@ -476,144 +447,11 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     if (width1 > 0)
     {
         float3 previousMip = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-        color = lerp(color, previousMip, 0.25); // Fixed blend weight for stability
+        color = lerp(color, previousMip, 0.22); // Fixed blend weight for stability
     }
-    
-
-    //color += Input1.Sample(SamplerLinearClamp, input.TexCoord);
     
     return float4(color, 1.0);
 }
-
-/* old
-META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
-{
-    uint width, height;
-    Input0.GetDimensions(width, height);
-    float2 texelSize = 1.0 / float2(width, height);
-
-    // 9-tap tent filter with fixed weights
-    float3 color = 0;
-    float totalWeight = 0;
-
-    // Sample offsets (fixed)
-    const float2 offsets[9] = {
-        float2( 0,  0),    // Center
-        float2(-1, -1),    // Corners
-        float2( 1, -1),
-        float2(-1,  1),
-        float2( 1,  1),
-        float2( 0, -1),    // Cross
-        float2(-1,  0),
-        float2( 1,  0),
-        float2( 0,  1)
-    };
-
-    // Sample weights (fixed)
-    const float weights[9] = {
-        4.0,    // Center
-        1.0,    // Corners
-        1.0,
-        1.0,
-        1.0,
-        2.0,    // Cross
-        2.0,
-        2.0,
-        2.0
-    };
-
-    UNROLL
-    for (int i = 0; i < 9; i++)
-    {
-        float2 offset = offsets[i] * texelSize * 2.0; // Fixed scale factor for stability
-        float4 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + offset);
-        color += sample.rgb * weights[i];
-        totalWeight += weights[i];
-    }
-
-    return float4(color / totalWeight, 1.0);
-}
-*/
-/*
-old 
-META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
-{
-    uint width, height;
-    Input0.GetDimensions(width, height);
-    float2 texelSize = 1.0 / float2(width, height);
-    
-    // Maintain fixed scale through mip chain
-    float2 scale = float2(2.0, 2.0);
-    float baseOffset = 1.0;
-    float offsetScale = 1.0f * baseOffset;
-
-    // Sample current mip level with tent filter
-    float3 color = 0;
-    float totalWeight = 0;
-
-    // Center
-    float4 center = Input0.Sample(SamplerLinearClamp, input.TexCoord);
-    float centerWeight = 4.0;
-    color += center.rgb * centerWeight;
-    totalWeight += centerWeight;
-
-    // Cross - fixed distance samples
-    float2 crossOffsets[4] = {
-        float2(offsetScale, 0),
-        float2(-offsetScale, 0),
-        float2(0, offsetScale),
-        float2(0, -offsetScale)
-    };
-
-    UNROLL
-    for (int i = 0; i < 4; i++)
-    {
-        float4 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + crossOffsets[i] * texelSize);
-        float weight = 2.0;
-        color += sample.rgb * weight;
-        totalWeight += weight;
-    }
-
-    // Corners - fixed distance samples
-    float2 cornerOffsets[4] = {
-        float2(offsetScale, offsetScale),
-        float2(-offsetScale, offsetScale),
-        float2(offsetScale, -offsetScale),
-        float2(-offsetScale, -offsetScale)
-    };
-
-    UNROLL
-    for (int j = 0; j < 4; j++)
-    {
-        float4 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + cornerOffsets[j] * texelSize);
-        float weight = 1.0;
-        color += sample.rgb * weight;
-        totalWeight += weight;
-    }
-
-    color /= totalWeight;
-
-    // Sample all previous mip levels from Input1 (full mip chain)
-    float currentMipLevel = log2(width/InputSize.x) + 1.0;
-    float3 accum = color;
-    float accumWeight = 1.0;
-    
-    // Sample previous mips
-    for(float mip = currentMipLevel + 1.0; mip < BloomMipCount; mip += 1.0)
-    {
-        float relativeScale = pow(2.0, mip - currentMipLevel);
-        float weight = pow(1.0f, mip - currentMipLevel);
-        
-        float3 mipSample = Input1.SampleLevel(SamplerLinearClamp, input.TexCoord, mip).rgb;
-        accum += mipSample * weight;
-        accumWeight += weight;
-    }
-
-    return float4(accum / accumWeight, 1.0);
-}
-*/
 
 
 
@@ -646,6 +484,8 @@ float4 PS_GaussainBlurV(Quad_VS2PS input) : SV_Target
 
 	return color;
 }
+
+
 
 // Generate 'ghosts' for lens flare
 META_PS(true, FEATURE_LEVEL_ES2)
