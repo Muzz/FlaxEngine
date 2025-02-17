@@ -14,8 +14,8 @@ namespace FlaxEditor.Viewport.Previews
     public class AnimatedModelPreview : AssetPreview
     {
         private AnimatedModel _previewModel;
-        private ContextMenuButton _showNodesButton, _showBoundsButton, _showFloorButton, _showNodesNamesButton;
-        private bool _showNodes, _showBounds, _showFloor, _showNodesNames;
+        private ContextMenuButton _showNodesButton, _showBoundsButton, _showFloorButton, _showNodesNamesButton, _showNodesAxisButton;
+        private bool _showNodes, _showBounds, _showFloor, _showNodesNames, _showNodesAxis;
         private StaticModel _floorModel;
         private bool _playAnimation, _playAnimationOnce;
         private float _playSpeed = 1.0f;
@@ -114,6 +114,24 @@ namespace FlaxEditor.Viewport.Previews
         }
 
         /// <summary>
+        /// Gets or sets a value indicating whether show animated model skeleton axis  names debug view.
+        /// </summary>
+        public bool ShowNodesAxis
+        {
+            get => _showNodesAxis;
+            set
+            {
+                if (_showNodesAxis == value)
+                    return;
+                _showNodesAxis = value;
+                if (value)
+                    ShowDebugDraw = true;
+                if (_showNodesAxisButton != null)
+                    _showNodesAxisButton.Checked = value;
+            }
+        }
+
+        /// <summary>
         /// Gets or sets a value indicating whether show animated model bounding box debug view.
         /// </summary>
         public bool ShowBounds
@@ -203,6 +221,10 @@ namespace FlaxEditor.Viewport.Previews
                 // Show Skeleton Names
                 _showNodesNamesButton = ViewWidgetShowMenu.AddButton("Skeleton Names", () => ShowNodesNames = !ShowNodesNames);
                 _showNodesNamesButton.CloseMenuOnClick = false;
+
+                // Show Skeleton Names
+                _showNodesAxisButton = ViewWidgetShowMenu.AddButton("Skeleton Axis", () => ShowNodesAxis = !ShowNodesAxis);
+                _showNodesAxisButton.CloseMenuOnClick = false;
 
                 // Show Floor
                 _showFloorButton = ViewWidgetShowMenu.AddButton("Floor", button => ShowFloor = !ShowFloor);
@@ -320,13 +342,33 @@ namespace FlaxEditor.Viewport.Previews
             _previewModel.ResetAnimation();
         }
 
+
+        private float GetViewSpaceScale(Vector3 position)
+        {
+            // Get the proper view matrix
+            Vector3 viewOrigin = Task.View.Origin;
+            Float3 cameraPosition = ViewPosition - viewOrigin;
+            CreateViewMatrix(cameraPosition, out var viewMatrix);
+
+            // Transform position to view space
+            var worldPos = position - viewOrigin;
+            var viewSpace = Vector3.Transform(worldPos, viewMatrix);
+            var viewDistance = Math.Abs(viewSpace.Z);
+
+            // Calculate scale based on view distance and viewport height
+            // This ensures text maintains consistent screen-space size
+            const float baseScale = 0.0015f;
+            float viewportScale = 1080.0f / Height; // Normalize to a reference height of 1080
+            return baseScale * viewDistance * viewportScale;
+        }
+
         /// <inheritdoc />
         protected override void OnDebugDraw(GPUContext context, ref RenderContext renderContext)
         {
             base.OnDebugDraw(context, ref renderContext);
 
             // Draw skeleton nodes
-            if (_showNodes || _showNodesNames)
+            if (_showNodes || _showNodesNames || _showNodesAxis)
             {
                 _previewModel.GetCurrentPose(out var pose, true);
                 var nodes = _previewModel.SkinnedModel?.Nodes;
@@ -363,6 +405,9 @@ namespace FlaxEditor.Viewport.Previews
                             }
                         }
                     }
+
+
+                    // In the OnDebugDraw method, modify the node names drawing:
                     if (_showNodesNames)
                     {
                         // Nodes names
@@ -370,8 +415,45 @@ namespace FlaxEditor.Viewport.Previews
                         {
                             if (nodesMask != null && !nodesMask[nodeIndex])
                                 continue;
-                            //var t = new Transform(pose[nodeIndex].TranslationVector, Quaternion.Identity, new Float3(0.1f));
-                            DebugDraw.DrawText(nodes[nodeIndex].Name, pose[nodeIndex].TranslationVector, Color.White, 20, 0.0f, 0.1f);
+                            var position = pose[nodeIndex].TranslationVector;
+                            
+
+                            var textScale = GetViewSpaceScale(position);
+                            // move below the axis. 
+                            position.Y = position.Y - (0.1f * textScale);
+
+                            DebugDraw.DrawText(nodes[nodeIndex].Name, position, Color.White, 20, 0.0f, textScale * 0.4f);
+                        }
+                    }
+
+                    if (_showNodesAxis)
+                    {
+                        // Axis lengths should also scale with distance
+                        for (int nodeIndex = 0; nodeIndex < pose.Length; nodeIndex++)
+                        {
+                            if (nodesMask != null && !nodesMask[nodeIndex])
+                                continue;
+
+                            var transform = pose[nodeIndex];
+                            var position = transform.TranslationVector;
+                            var textScale = GetViewSpaceScale(position);
+                            var axisLength = 35.0f * textScale; // Scale axis length with distance too
+
+                            var right = Vector3.TransformNormal(Vector3.Right, transform) * axisLength;
+                            var up = Vector3.TransformNormal(Vector3.Up, transform) * axisLength;
+                            var forward = Vector3.TransformNormal(Vector3.Forward, transform) * axisLength;
+
+                            // Draw right (X) axis in red
+                            DebugDraw.DrawLine(position, position + right, Color.Red, 0, false);
+                            DebugDraw.DrawText("X", position + right, Color.Red, 20, 0.0f, textScale * 0.3f);
+
+                            // Draw up (Y) axis in green
+                            DebugDraw.DrawLine(position, position + up, Color.YellowGreen, 0, false);
+                            DebugDraw.DrawText("Y", position + up, Color.YellowGreen, 20, 0.0f, textScale * 0.3f);
+
+                            // Draw forward (Z) axis in blue
+                            DebugDraw.DrawLine(position, position + forward, Color.Blue, 0, false);
+                            DebugDraw.DrawText("Z", position + forward, Color.Blue, 20, 0.0f, textScale * 0.3f);
                         }
                     }
                 }
@@ -438,6 +520,7 @@ namespace FlaxEditor.Viewport.Previews
             _showBoundsButton = null;
             _showFloorButton = null;
             _showNodesNamesButton = null;
+            _showNodesAxisButton = null;
 
             base.OnDestroy();
         }

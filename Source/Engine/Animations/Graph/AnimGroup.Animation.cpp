@@ -10,6 +10,24 @@
 #include "Engine/Animations/InverseKinematics.h"
 #include "Engine/Level/Actors/AnimatedModel.h"
 
+
+// These should be placed in a more generic place?
+void ApplyParentTransform(Transform& parentTransform, Transform& pose) {
+    parentTransform.Orientation.Normalize();
+    Quaternion::Multiply(parentTransform.Orientation, pose.Orientation, pose.Orientation);
+    pose.Orientation.Normalize(); // Normalize after multiplication
+}
+
+
+// These should be placed in a more generic place?
+void FastLerp(Quaternion& result, const Quaternion& a, const Quaternion& b, float alpha) {
+    float dotResult = Quaternion::Dot(a, b);
+    float bias = dotResult >= 0.0f ? 1.0f : -1.0f;
+    result = (b * alpha) + (a * (bias * (1.0f - alpha)));
+}
+
+
+
 struct AnimSampleData
 {
     Animation* Anim;
@@ -166,6 +184,8 @@ void RetargetSkeletonNode(const SkeletonData& sourceSkeleton, const SkeletonData
     // Extract local node transformation
     localMatrix.Decompose(node);
 }
+
+
 
 void RetargetSkeletonPose(const SkeletonData& sourceSkeleton, const SkeletonData& targetSkeleton, const SkinnedModel::SkeletonMapping& mapping, const Transform* sourceNodes, Transform* targetNodes)
 {
@@ -2549,6 +2569,255 @@ void AnimGraphExecutor::ProcessGroupAnimation(Box* boxBase, Node* nodeBase, Valu
         value = *(Float4*)bucket.Data;
         break;
     }
+
+
+
+
+
+
+    case 35:
+    {
+        // Get input
+        auto input = tryGetValue(node->GetBox(1), Value::Null);
+        const auto nodes = node->GetNodes(this);
+        if (ANIM_GRAPH_IS_VALID_PTR(input))
+        {
+            // Use input nodes
+            CopyNodes(nodes, input);
+        }
+        else
+        {
+            // Use default nodes
+            InitNodes(nodes);
+            input = nodes;
+        }
+
+
+
+        // Fetch the settings
+        const auto srcNodeIndex = node->Data.CopyNode.SrcNodeIndex;
+        const auto dstNodeIndex = node->Data.CopyNode.DstNodeIndex;
+        //Vector3 up = (Vector3)tryGetValue(node->GetBox(2), Vector3::Zero);
+        const float weight = (float)tryGetValue(node->GetBox(2), node->Values[2]);
+
+        // Validate node indices and weight
+        if (srcNodeIndex < 0 || srcNodeIndex >= _skeletonNodesCount ||
+            dstNodeIndex < 0 || dstNodeIndex >= _skeletonNodesCount
+            )
+        {
+            // Pass through the input
+            value = input;
+            break;
+        }
+
+        // Get source and destination node's model space transformation
+        Transform srcNodeModelTransform = nodes->GetNodeModelTransformation(_graph.BaseModel->Skeleton, srcNodeIndex);
+        Transform dstNodeModelTransform = nodes->GetNodeModelTransformation(_graph.BaseModel->Skeleton, dstNodeIndex);
+
+        // Calculate the model space position of the target relative to the source node
+        Vector3 targetModelPos = dstNodeModelTransform.Translation;
+
+        // Solve Aim IK to get the rotation needed to look at the target
+        Quaternion nodeCorrection;
+
+        Vector3 toTarget = targetModelPos - srcNodeModelTransform.Translation;
+        toTarget.Normalize();
+        const Vector3 fromNode = Vector3::Up;
+        Quaternion::FindBetween(fromNode, toTarget, nodeCorrection);
+
+        Quaternion weightedRotation;
+        FastLerp(weightedRotation, srcNodeModelTransform.Orientation, nodeCorrection, weight);
+        weightedRotation.Normalize(); // Normalize the result
+
+
+        // Apply the blended rotation to the source node
+        srcNodeModelTransform.Orientation = weightedRotation;
+        nodes->SetNodeModelTransformation(_graph.BaseModel->Skeleton, srcNodeIndex, srcNodeModelTransform);
+
+        value = nodes;
+        break;
+    }
+
+    //locked track
+    case 36:
+    {
+        // Get input
+        auto input = tryGetValue(node->GetBox(1), Value::Null);
+        const auto nodes = node->GetNodes(this);
+        if (ANIM_GRAPH_IS_VALID_PTR(input))
+        {
+            // Use input nodes
+            CopyNodes(nodes, input);
+        }
+        else
+        {
+            // Use default nodes
+            InitNodes(nodes);
+            input = nodes;
+        }
+
+        // Fetch the settings
+        const auto srcNodeIndex = node->Data.CopyNode.SrcNodeIndex;
+        const auto dstNodeIndex = node->Data.CopyNode.DstNodeIndex;
+
+        const float weight = (float)tryGetValue(node->GetBox(2), node->Values[2]);
+        Vector3 flipZ = (Vector3)tryGetValue(node->GetBox(3), true);
+
+
+        // Validate node indices and weight
+        if (srcNodeIndex < 0 || srcNodeIndex >= _skeletonNodesCount ||
+            dstNodeIndex < 0 || dstNodeIndex >= _skeletonNodesCount
+            )
+        {
+            // Pass through the input
+            value = input;
+            break;
+        }
+
+        // Get source and destination node's model space transformation
+        Transform srcNodeTransform = nodes->GetNodeModelTransformation(_graph.BaseModel->Skeleton, srcNodeIndex);
+        Transform dstNodeTransform = nodes->GetNodeModelTransformation(_graph.BaseModel->Skeleton, dstNodeIndex);
+
+        // Calculate direction to target in world space
+        Vector3 worldDirectionToTarget = (dstNodeTransform.Translation - srcNodeTransform.Translation).GetNormalized();
+
+        // Project this direction onto the plane orthogonal to the Y-axis (lockedAxis) of srcNodeTransform
+        Vector3 lockedAxis = srcNodeTransform.Orientation * Vector3::UnitY; // Adjust this if your locked axis is different
+        Vector3 projection = Vector3::Dot(worldDirectionToTarget, lockedAxis) * lockedAxis;
+        Vector3 directionOnPlane = worldDirectionToTarget - projection;
+        directionOnPlane.Normalize();
+        if (flipZ == true) {
+            directionOnPlane = -directionOnPlane;
+        }
+
+        // Calculate rotation needed to align Z-axis with directionOnPlane while keeping Y-axis locked
+        Quaternion targetRotation = Quaternion::LookRotation(directionOnPlane, lockedAxis);
+
+        // Blend the rotation with the current bone's orientation
+        Quaternion finalRotation;
+        Quaternion::Slerp(srcNodeTransform.Orientation, targetRotation, weight, finalRotation);
+
+        // Apply the final rotation to the bone
+        srcNodeTransform.Orientation = finalRotation;
+        nodes->SetNodeModelTransformation(_graph.BaseModel->Skeleton, srcNodeIndex, srcNodeTransform);
+
+        value = nodes;
+        break;
+    }
+
+    // Advanced Blend Additive
+    case 37:
+    {
+        const float alpha = Math::Saturate((float)tryGetValue(node->GetBox(3), node->Values[0]));
+
+        // Only A
+        if (Math::NearEqual(alpha, 0.0f, ANIM_GRAPH_BLEND_THRESHOLD))
+        {
+            value = tryGetValue(node->GetBox(1), Value::Null);
+        }
+        // Blend A and B
+        else
+        {
+            const auto valueA = tryGetValue(node->GetBox(1), Value::Null);
+            const auto valueB = tryGetValue(node->GetBox(2), Value::Null);
+            const auto valueC = tryGetValue(node->GetBox(4), Value::Null);
+
+            if (!ANIM_GRAPH_IS_VALID_PTR(valueA))
+            {
+                value = Value::Null;
+            }
+            else if (!ANIM_GRAPH_IS_VALID_PTR(valueB))
+            {
+                value = valueA;
+            }
+            else if (!ANIM_GRAPH_IS_VALID_PTR(valueC))
+            {
+                value = valueA;
+            }
+            else
+            {
+                const auto nodes = node->GetNodes(this);
+                const auto basePoseNodes = static_cast<AnimGraphImpulse*>(valueA.AsPointer);
+                const auto additivePoseNodes = static_cast<AnimGraphImpulse*>(valueB.AsPointer);
+                const auto idlePoseNodes = static_cast<AnimGraphImpulse*>(valueC.AsPointer);
+
+                const auto& skeleton = _graph.BaseModel->Skeleton; // Assuming this is how you access the skeleton
+
+
+                // Convert base pose to model space
+                for (int32 i = 0; i < basePoseNodes->Nodes.Count(); i++) {
+                    const int32 parentIndex = skeleton.Nodes[i].ParentIndex;
+                    if (parentIndex != -1) {
+                        Transform baseParentTransform = basePoseNodes->Nodes[parentIndex];
+                        Transform addParentTransform = additivePoseNodes->Nodes[parentIndex];
+                        Transform idleParentTransform = idlePoseNodes->Nodes[parentIndex];
+
+                        ApplyParentTransform(baseParentTransform, basePoseNodes->Nodes[i]);
+                        ApplyParentTransform(addParentTransform, additivePoseNodes->Nodes[i]);
+                        ApplyParentTransform(idleParentTransform, idlePoseNodes->Nodes[i]);
+                    }
+                }
+
+                // Apply the additive blending in model space
+                for (int32 i = 0; i < basePoseNodes->Nodes.Count(); i++) {
+                    Transform& basePoseTransform = basePoseNodes->Nodes[i];
+                    const Transform& additivePoseTransform = additivePoseNodes->Nodes[i];
+                    const Transform& idlePoseTransform = idlePoseNodes->Nodes[i];
+
+                    // Calculate the delta from the reference (idle) pose
+                    Transform deltaPose;
+                    deltaPose.Translation = additivePoseTransform.Translation - idlePoseTransform.Translation;
+                    deltaPose.Scale = additivePoseTransform.Scale / idlePoseTransform.Scale; // Assuming uniform scaling
+
+                    Quaternion inverseIdleOrientation = idlePoseTransform.Orientation;
+                    inverseIdleOrientation.Invert();
+                    Quaternion deltaOrientation;
+                    Quaternion::Multiply(inverseIdleOrientation, additivePoseTransform.Orientation, deltaOrientation);
+
+                    // Apply the weighted delta to the base pose in model space
+                    Quaternion weightedSourceOrientation;
+                    FastLerp(weightedSourceOrientation, Quaternion::Identity, deltaOrientation, alpha);
+
+                    // Multiply rotation in-place
+                    Quaternion::Multiply(basePoseTransform.Orientation, weightedSourceOrientation, basePoseTransform.Orientation);
+                    basePoseTransform.Orientation.Normalize();
+
+                    // Accumulate translation and scale
+                    basePoseTransform.Translation += deltaPose.Translation * alpha;
+                    Vector3 scaleChange = (deltaPose.Scale - Vector3::One) * alpha;
+                    basePoseTransform.Scale *= (Vector3::One + scaleChange);
+                }
+
+                // Convert the result back to local space
+                for (int32 i = basePoseNodes->Nodes.Count() - 1; i >= 0; i--)
+                {
+                    Transform& basePose = basePoseNodes->Nodes[i];
+                    const int32 parentIndex = skeleton.Nodes[i].ParentIndex;
+                    if (parentIndex != -1)
+                    {
+                        const Transform& parentTransform = basePoseNodes->Nodes[parentIndex];
+                        Quaternion inverseParentOrientation = parentTransform.Orientation;
+                        inverseParentOrientation.Invert();
+                        Quaternion::Multiply(inverseParentOrientation, basePose.Orientation, basePose.Orientation);
+                        // Normalize if necessary
+                        basePose.Orientation.Normalize();
+
+
+                    }
+                    nodes->Nodes[i] = basePose;
+                }
+
+
+                // Blend root motion if needed
+                Transform blendedRootMotion = Transform::Lerp(basePoseNodes->RootMotion, additivePoseNodes->RootMotion, alpha);
+                nodes->RootMotion = blendedRootMotion;
+                value = nodes;
+            }
+        }
+
+        break;
+    }
+
     default:
         break;
     }

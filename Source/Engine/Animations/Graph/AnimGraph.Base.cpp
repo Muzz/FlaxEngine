@@ -354,6 +354,39 @@ bool AnimGraphBase::onNodeLoaded(Node* n)
         case 34:
             LoadStateTransitions(n->Data.AnyState, n->Values[0]);
             break;
+
+        // track to Node
+        case 35:
+        {
+            auto& data = n->Data.CopyNode;
+            if (_graph->BaseModel && !_graph->BaseModel->WaitForLoaded())
+            {
+                data.SrcNodeIndex = _graph->BaseModel->FindNode((StringView)n->Values[0]);
+                data.DstNodeIndex = _graph->BaseModel->FindNode((StringView)n->Values[1]);
+            }
+            else
+            {
+                data.SrcNodeIndex = -1;
+                data.DstNodeIndex = -1;
+            }
+            break;
+        }
+        // locked track Node
+        case 36:
+        {
+            auto& data = n->Data.CopyNode;
+            if (_graph->BaseModel && !_graph->BaseModel->WaitForLoaded())
+            {
+                data.SrcNodeIndex = _graph->BaseModel->FindNode((StringView)n->Values[0]);
+                data.DstNodeIndex = _graph->BaseModel->FindNode((StringView)n->Values[1]);
+            }
+            else
+            {
+                data.SrcNodeIndex = -1;
+                data.DstNodeIndex = -1;
+            }
+            break;
+        }
         }
         break;
     // Custom
