@@ -45,8 +45,8 @@ float BloomFalloffSoftness;       // Controls how gradually the bloom effect fad
 float BloomThresholdStart;
 float BloomThresholdSoftness;
 float BloomMipCount; 
-
-
+float BloomLayer;
+float3 BloomPad;
 
 float3 VignetteColor;
 float VignetteShapeFactor;
@@ -272,7 +272,6 @@ float4 PS_Threshold(Quad_VS2PS input) : SV_Target
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 {
-    //return float4(1.0, 1.0, 0.0, 1.0); // Bright red
     // Get dimensions for precise texel calculations
     uint width, height;
     Input0.GetDimensions(width, height);
@@ -282,9 +281,13 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
     float3 color = 0;
     float totalWeight = 0;
     
-
     // Center sample with high weight for energy preservation
     float3 center = Input0.Sample(SamplerLinearClamp, input.TexCoord).rgb;
+    
+    // Apply Karis average to prevent bright pixels from dominating
+    float centerLuma = max(dot(center, float3(0.2126, 0.7152, 0.0722)), 0.0001);
+    center = center / (1.0 + centerLuma);
+    
     float centerWeight = 4.0;
     color += center * centerWeight;
     totalWeight += centerWeight;
@@ -296,6 +299,11 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
         float angle = i * (PI / 2.0);
         float2 offset = float2(cos(angle), sin(angle)) * texelSize;
         float3 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + offset).rgb;
+        
+        // Apply Karis average
+        float sampleLuma = max(dot(sample, float3(0.2126, 0.7152, 0.0722)), 0.0001);
+        sample = sample / (1.0 + sampleLuma);
+        
         float weight = 2.0;
         color += sample * weight;
         totalWeight += weight;
@@ -308,12 +316,21 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
         float angle = j * (PI / 4.0);
         float2 offset = float2(cos(angle), sin(angle)) * texelSize * 1.4142;
         float3 sample = Input0.Sample(SamplerLinearClamp, input.TexCoord + offset).rgb;
+        
+        // Apply Karis average
+        float sampleLuma = max(dot(sample, float3(0.2126, 0.7152, 0.0722)), 0.0001);
+        sample = sample / (1.0 + sampleLuma);
+        
         float weight = 1.0;
         color += sample * weight;
         totalWeight += weight;
     }
 
     color /= totalWeight;
+    
+    // Un-apply Karis average to maintain energy
+    float finalLuma = max(dot(color, float3(0.2126, 0.7152, 0.0722)), 0.0001);
+    color = color * (1.0 + finalLuma);
 
     // Apply threshold with quadratic rolloff for smoother transition
     float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
@@ -331,9 +348,7 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
 
     // Store threshold result in alpha for downsample chain
     return float4(clamped, luminance);
-
 }
-
 
 
 
@@ -389,7 +404,7 @@ float4 PS_BloomDownsample(Quad_VS2PS input) : SV_Target
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
 {
-    float anisotropy = 0.0; 
+    float anisotropy = 1.0; 
     
     uint width, height;
     Input0.GetDimensions(width, height);
@@ -443,11 +458,14 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     
     uint width1, height1;
     Input1.GetDimensions(width1, height1);
+    
+    //color *= (BloomLayer / BloomMipCount) * 2.0;
+    color *= 0.6;
     BRANCH
     if (width1 > 0)
     {
         float3 previousMip = Input1.Sample(SamplerLinearClamp, input.TexCoord).rgb;
-        color = lerp(color, previousMip, 0.22); // Fixed blend weight for stability
+        color += previousMip;
     }
     
     return float4(color, 1.0);
@@ -651,22 +669,18 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
 	}
     */
 
-	// Bloom
-    // Bloom with dual filtering upsample
-    BRANCH
-    if (BloomIntensity > 0)
-    {
-        // Sample the final bloom result from our single mip chain
-        float3 bloom = Input2.Sample(SamplerLinearClamp, input.TexCoord).rgb;
+// In PS_Composite:
+BRANCH
+if (BloomIntensity > 0)
+{
+    // Sample the final bloom result
+    float3 bloom = Input2.Sample(SamplerLinearClamp, input.TexCoord).rgb;
     
-        // Apply bloom intensity with better control
-        // Scale down the bloom intensity for better control (0.1 gives a good range)
-        float adjustedIntensity = BloomIntensity * 0.1;
+
     
-    
-        // Add bloom while preserving bright source details
-        color.rgb += bloom * adjustedIntensity;
-    }
+    // Add to final image
+    color.rgb += bloom * 0.01 * BloomIntensity;
+}
 
 	// Lens Dirt
 	float3 lensDirt = LensDirt.SampleLevel(SamplerLinearClamp, uv, 0).rgb;
@@ -718,7 +732,6 @@ float4 PS_Composite(Quad_VS2PS input) : SV_Target
             }
         }
     }
-
 
 	// Film Grain
 	BRANCH

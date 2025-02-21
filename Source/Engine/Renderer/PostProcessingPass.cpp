@@ -284,6 +284,8 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         data.BloomHighlightScale = settings.Bloom.BloomHighlightScale;        // Extra multiplier for very bright pixels
         data.BloomFalloffSoftness = settings.Bloom.BloomFalloffSoftness;       // Controls how gradually the bloom effect fades
         data.BloomMipCount = bloomMipCount;
+        data.BloomLayer = 0.0f;
+
 
     }
     else
@@ -461,6 +463,9 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
 
             const float mipWidth = w2 >> mip;
             const float mipHeight = h2 >> mip;
+
+            data.BloomLayer = static_cast<float>(mip);  // Set the current mip as bloom layer
+            context->UpdateCB(cb0, &data);              // Update the constant buffer
 
             context->SetRenderTarget(bloomBuffer2->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);

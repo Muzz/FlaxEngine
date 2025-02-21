@@ -24,6 +24,8 @@ private:
         float BloomThresholdStart;
         float BloomThresholdSoftness;
         float BloomMipCount;
+        float BloomLayer;
+        Float3 BloomPad;
 
         Float3 VignetteColor;
         float VignetteShapeFactor;

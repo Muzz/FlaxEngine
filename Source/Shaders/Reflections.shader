@@ -69,24 +69,6 @@ struct ProbeBufferOutput
 };
 
 
-META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_EnvProbeOLD(Model_VS2PS input) : SV_Target0
-{
-    // Obtain UVs corresponding to the current pixel
-    float2 uv = (input.ScreenPos.xy / input.ScreenPos.w) * float2(0.5, -0.5) + float2(0.5, 0.5);
-    // Sample GBuffer
-    GBufferData gBufferData = GetGBufferData();
-    GBufferSample gBuffer = SampleGBuffer(gBufferData, uv);
-    // Check if cannot light a pixel
-    BRANCH
-    if (gBuffer.ShadingModel == SHADING_MODEL_UNLIT)
-    {
-        discard;
-        return 0;
-    }
-    // Sample probe
-    return SampleReflectionProbe(gBufferData.ViewPos, Probe, PData, gBuffer.WorldPos, gBuffer.Normal, gBuffer.Roughness);
-}
 
 META_PS(true, FEATURE_LEVEL_ES2)
 ProbeBufferOutput PS_EnvProbe(Model_VS2PS input)
@@ -95,34 +77,45 @@ ProbeBufferOutput PS_EnvProbe(Model_VS2PS input)
     
     // Sample GBuffer
     float2 uv = (input.ScreenPos.xy / input.ScreenPos.w) * float2(0.5, -0.5) + float2(0.5, 0.5);
-
     GBufferData gBufferData = GetGBufferData();
     GBufferSample gBuffer = SampleGBuffer(gBufferData, uv);
     
     // Probe sampling setup
     float3 captureVector = gBuffer.WorldPos - PData.ProbePos;
-    float captureVectorLength = length(captureVector);
-    float fade = 1.0 - smoothstep(0.7, 1, saturate(captureVectorLength * PData.ProbeInvRadius));
-    fade *= PData.ProbeBrightness;
-
-    if (fade <= 0.0f || gBuffer.ShadingModel == SHADING_MODEL_UNLIT)
+    float distance = length(captureVector);
+    float radius = 1.0 / PData.ProbeInvRadius;
+    
+    // Calculate weight with more brightness
+    float normalizedDist = distance / radius;
+    float falloff = 1.0 - saturate(normalizedDist); // Linear falloff
+    
+    // Use a scaled importance factor to prevent things from getting too dark
+    float importance = saturate(0.5 / radius); // Scaled based on radius, but less aggressive
+    
+    // Combine factors and boost overall brightness
+    float weight = falloff * (1.0 + importance) * PData.ProbeBrightness;
+    
+    // Ensure smaller probes still have more influence
+    weight *= 1.0 + (0.5 * importance);
+    
+    if (weight <= 0.0001f || gBuffer.ShadingModel == SHADING_MODEL_UNLIT)
     {
         discard;
         return output;
     }
-
-
-    float3 V = normalize(gBuffer.WorldPos - gBufferData.ViewPos); // Flipped to point TO surface FROM camera
+    
+    // Sample for specular reflections
+    float3 V = normalize(gBuffer.WorldPos - gBufferData.ViewPos);
     float3 R = reflect(V, gBuffer.Normal);
     float3 specularDir = normalize(captureVector + R / PData.ProbeInvRadius);
-    output.Specular = float4(Probe.SampleLevel(SamplerLinearClamp, specularDir, ProbeMipFromRoughness(gBuffer.Roughness)).rgb * fade, fade);
-
-    // Diffuse sampling (going to specular output as in original working version)
+    float3 specularSample = Probe.SampleLevel(SamplerLinearClamp, specularDir, ProbeMipFromRoughness(gBuffer.Roughness)).rgb;
+    output.Specular = float4(specularSample * weight, weight);
+    
+    // Sample for diffuse reflections
     float3 probeSpaceNormal = normalize(captureVector + gBuffer.Normal / PData.ProbeInvRadius);
-    output.Diffuse = float4(Probe.SampleLevel(SamplerLinearClamp, probeSpaceNormal, REFLECTION_CAPTURE_NUM_MIPS - 1).rgb * fade, fade);
-
-    //output.Specular = float4(0.0,0.0,0.0,0.0);
-    //output.Diffuse = float4(0.0,0.0,0.0,0.0);
+    float3 diffuseSample = Probe.SampleLevel(SamplerLinearClamp, probeSpaceNormal, REFLECTION_CAPTURE_NUM_MIPS - 1).rgb;
+    output.Diffuse = float4(diffuseSample * weight, weight);
+    
     return output;
 }
 
