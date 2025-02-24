@@ -490,25 +490,25 @@ API_STRUCT() struct FLAXENGINE_API BloomSettings : ISerializable
     /// <summary>
     /// Extra multiplier for very bright pixels
     /// </summary>
-    API_FIELD(Attributes = "Limit(0.01f, 1000.0f, 0.01f), EditorOrder(4), PostProcessSetting((int)BloomSettingsOverride.BloomHighlightScale)")
+    API_FIELD(Attributes = "Limit(0.00f, 1000.0f, 0.01f), EditorOrder(4), PostProcessSetting((int)BloomSettingsOverride.BloomHighlightScale)")
         float BloomHighlightScale = 0.5f;
 
     /// <summary>
     /// Controls how gradually the bloom effect fades
     /// </summary>
-    API_FIELD(Attributes = "Limit(0.01f, 1000.0f, 0.01f), EditorOrder(5), PostProcessSetting((int)BloomSettingsOverride.BloomFalloffSoftness)")
+    API_FIELD(Attributes = "Limit(0.00f, 1000.0f, 0.01f), EditorOrder(5), PostProcessSetting((int)BloomSettingsOverride.BloomFalloffSoftness)")
         float BloomFalloffSoftness = 0.5f;
 
     /// <summary>
     /// At what brightness level do we threshold to generate the bloom from. 
     /// </summary>
-    API_FIELD(Attributes = "Limit(1.0f, 100.0f, 0.1f), EditorOrder(6), PostProcessSetting((int)BloomSettingsOverride.BloomThresholdStart)")
+    API_FIELD(Attributes = "Limit(0.0f, 1000.0f, 0.1f), EditorOrder(6), PostProcessSetting((int)BloomSettingsOverride.BloomThresholdStart)")
         float BloomThresholdStart = 1.0f;
 
     /// <summary>
     /// Width of the softknee threshold, to generate bloom from
     /// </summary>
-    API_FIELD(Attributes = "Limit(1.0f, 100.0f, 0.1f), EditorOrder(7), PostProcessSetting((int)BloomSettingsOverride.BloomThresholdSoftness)")
+    API_FIELD(Attributes = "Limit(0.0f, 1000.0f, 0.1f), EditorOrder(7), PostProcessSetting((int)BloomSettingsOverride.BloomThresholdSoftness)")
         float BloomThresholdSoftness = 1.0f;
 
 public:

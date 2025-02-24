@@ -349,77 +349,6 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
         context->Clear(bloomBuffer2->View(0, mip), Color::Transparent);
     }
 
-    //// Check if use bloom
-    //if (useBloom)
-    //{
-    //    // Initial bright pass - store in bloomBuffer1 mip 0
-    //    context->SetRenderTarget(bloomBuffer1->View(0, 0));
-    //    context->SetViewportAndScissors((float)w2, (float)h2);
-    //    context->BindSR(0, input->View());
-    //    context->SetState(_psBloomBrightPass);
-    //    context->DrawFullscreenTriangle();
-    //    context->ResetRenderTarget();
-
-    //    // Progressive downsamples - fill bloomBuffer1's mip chain
-    //    for (int32 mip = 1; mip < bloomMipCount; mip++)
-    //    {
-    //        const float mipWidth = w2 >> mip;
-    //        const float mipHeight = h2 >> mip;
-    //        context->SetRenderTarget(bloomBuffer1->View(0, mip));
-    //        context->SetViewportAndScissors(mipWidth, mipHeight);
-    //        context->BindSR(0, bloomBuffer1->View(0, mip - 1));
-    //        context->SetState(_psBloomDownsample);
-    //        context->DrawFullscreenTriangle();
-    //        context->ResetRenderTarget();
-    //    }
-
-    //    //// Progressive upsamples - store results in bloomBuffer2
-    //    //for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
-    //    //{
-    //    //    const float mipWidth = w2 >> mip;
-    //    //    const float mipHeight = h2 >> mip;
-
-    //    //    // Set target as current mip level in bloomBuffer2
-    //    //    context->SetRenderTarget(bloomBuffer2->View(0, mip));
-    //    //    context->SetViewportAndScissors(mipWidth, mipHeight);
-
-    //    //    // Bind previous result from bloomBuffer2 and original chain from bloomBuffer1
-    //    //    context->BindSR(0, bloomBuffer2->View(0, mip + 1));  // Previous upsampled result
-    //    //    context->BindSR(1, bloomBuffer1);                    // Original downsample chain
-
-    //    //    context->SetState(_psBloomDualFilterUpsample);
-    //    //    context->DrawFullscreenTriangle();
-    //    //    context->ResetRenderTarget();
-    //    //}
-
-    //    // Progressive upsamples - store results in bloomBuffer2 
-    //    for (int32 mip = bloomMipCount - 2; mip >= 0; mip--) {
-    //        const float mipWidth = w2 >> mip;
-    //        const float mipHeight = h2 >> mip;
-
-    //        context->SetRenderTarget(bloomBuffer2->View(0, mip));
-    //        context->SetViewportAndScissors(mipWidth, mipHeight);
-
-    //        // Bind previous result from bloomBuffer2
-    //        context->BindSR(0, bloomBuffer2->View(0, mip + 1));
-
-    //        // Bind corresponding level from downsample chain
-    //        context->BindSR(1, bloomBuffer1->View(0, mip));
-
-    //        context->SetState(_psBloomDualFilterUpsample);
-    //        context->DrawFullscreenTriangle();
-    //        context->ResetRenderTarget();
-    //    }
-
-    //    // Bind final result for composite pass
-    //    context->BindSR(2, bloomBuffer2);
-    //}
-    //else
-    //{
-    //    context->UnBindSR(2);
-    //}
-
-
     // Check if use bloom
     if (useBloom)
     {
@@ -486,54 +415,57 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     }
 
     ////////////////////////////////////////////////////////////////////////////////////
-    // Lens Flares
+     //Lens Flares
+
 
     // Check if use lens flares
-    //if (useLensFlares)
-    //{
-    //    // Prepare lens flares helper textures
-    //    context->BindSR(5, getCustomOrDefault(settings.LensFlares.LensStar, _defaultLensStar, TEXT("Engine/Textures/DefaultLensStarburst")));
-    //    context->BindSR(6, getCustomOrDefault(settings.LensFlares.LensColor, _defaultLensColor, TEXT("Engine/Textures/DefaultLensColor")));
+    if (useLensFlares)
+    {
+        // Prepare lens flares helper textures
+        context->BindSR(5, getCustomOrDefault(settings.LensFlares.LensStar, _defaultLensStar, TEXT("Engine/Textures/DefaultLensStarburst")));
+        context->BindSR(6, getCustomOrDefault(settings.LensFlares.LensColor, _defaultLensColor, TEXT("Engine/Textures/DefaultLensColor")));
 
-    //    // Render lens flares
-    //    context->SetRenderTarget(bloomTmp2->View(0, 1));
-    //    context->SetViewportAndScissors((float)w4, (float)h4);
-    //    context->BindSR(3, bloomTmp1->View(0, 1));
-    //    context->SetState(_psGenGhosts);
-    //    context->DrawFullscreenTriangle();
-    //    context->ResetRenderTarget();
-    //    context->UnBindSR(3);
+        // use bloomBuffer1's mip 1 as input for lens flares
 
-    //    // Gaussian blur kernel
-    //    GB_ComputeKernel(2.0f, static_cast<float>(w4), static_cast<float>(h4));
+        // Render lens flares
+        context->SetRenderTarget(bloomBuffer2->View(0, 1));
+        context->SetViewportAndScissors((float)w4, (float)h4);
+        context->BindSR(3, bloomBuffer1->View(0, 1)); // Use mip 1 of bloomBuffer1 as source
+        context->SetState(_psGenGhosts);
+        context->DrawFullscreenTriangle();
+        context->ResetRenderTarget();
+        context->UnBindSR(3);
 
-    //    // Gaussian blur H
-    //    Platform::MemoryCopy(_gbData.GaussianBlurCache, GaussianBlurCacheH, sizeof(GaussianBlurCacheH));
-    //    context->UpdateCB(cb1, &_gbData);
-    //    context->BindCB(1, cb1);
-    //    context->SetRenderTarget(bloomTmp1->View(0, 1));
-    //    context->BindSR(0, bloomTmp2->View(0, 1));
-    //    context->SetState(_psBlurH);
-    //    context->DrawFullscreenTriangle();
-    //    context->ResetRenderTarget();
+        // Gaussian blur kernel
+        GB_ComputeKernel(2.0f, static_cast<float>(w4), static_cast<float>(h4));
 
-    //    // Gaussian blur V
-    //    Platform::MemoryCopy(_gbData.GaussianBlurCache, GaussianBlurCacheV, sizeof(GaussianBlurCacheV));
-    //    context->UpdateCB(cb1, &_gbData);
-    //    context->BindCB(1, cb1);
-    //    context->SetRenderTarget(bloomTmp2->View(0, 1));
-    //    context->BindSR(0, bloomTmp1->View(0, 1));
-    //    context->SetState(_psBlurV);
-    //    context->DrawFullscreenTriangle();
-    //    context->ResetRenderTarget();
+        // Gaussian blur H
+        Platform::MemoryCopy(_gbData.GaussianBlurCache, GaussianBlurCacheH, sizeof(GaussianBlurCacheH));
+        context->UpdateCB(cb1, &_gbData);
+        context->BindCB(1, cb1);
+        context->SetRenderTarget(bloomBuffer1->View(0, 1));
+        context->BindSR(0, bloomBuffer2->View(0, 1));
+        context->SetState(_psBlurH);
+        context->DrawFullscreenTriangle();
+        context->ResetRenderTarget();
 
-    //    // Set lens flares output
-    //    context->BindSR(3, bloomTmp2->View(0, 1));
-    //}
-    //else
-    //{
-    //    context->BindSR(3, (GPUResourceView*)nullptr);
-    //}
+        // Gaussian blur V
+        Platform::MemoryCopy(_gbData.GaussianBlurCache, GaussianBlurCacheV, sizeof(GaussianBlurCacheV));
+        context->UpdateCB(cb1, &_gbData);
+        context->BindCB(1, cb1);
+        context->SetRenderTarget(bloomBuffer2->View(0, 1));
+        context->BindSR(0, bloomBuffer1->View(0, 1));
+        context->SetState(_psBlurV);
+        context->DrawFullscreenTriangle();
+        context->ResetRenderTarget();
+
+        // Set lens flares output
+        context->BindSR(3, bloomBuffer2->View(0, 1));
+    }
+    else
+    {
+        context->BindSR(3, (GPUResourceView*)nullptr);
+    }
 
     ////////////////////////////////////////////////////////////////////////////////////
     // Final composite
