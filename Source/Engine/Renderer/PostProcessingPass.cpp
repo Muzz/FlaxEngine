@@ -277,16 +277,13 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
     if (useBloom)
     {
         data.BloomIntensity = settings.Bloom.Intensity;
-        data.BloomSpreadBalance = settings.Bloom.BloomSpreadBalance;         // 0 = tight core bloom, 1 = wide soft bloom
-        data.BloomClampIntensity = settings.Bloom.BloomClampIntensity;
-        data.BloomThresholdStart = settings.Bloom.BloomThresholdStart;
-        data.BloomThresholdSoftness = settings.Bloom.BloomThresholdSoftness;
-        data.BloomHighlightScale = settings.Bloom.BloomHighlightScale;        // Extra multiplier for very bright pixels
-        data.BloomFalloffSoftness = settings.Bloom.BloomFalloffSoftness;       // Controls how gradually the bloom effect fades
+        data.BloomClamp = settings.Bloom.Clamp;
+        data.BloomThreshold = settings.Bloom.Threshold;
+        data.BloomThresholdKnee = settings.Bloom.ThresholdKnee;
+        data.BloomBaseMix = settings.Bloom.BaseMix;
+        data.BloomHighMix = settings.Bloom.HighMix;
         data.BloomMipCount = bloomMipCount;
         data.BloomLayer = 0.0f;
-
-
     }
     else
     {
@@ -375,10 +372,6 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
 
         }
 
-        // ok here is the idea. 
-        // we have the downsample chain. 
-        //// but we need to reverse iterate through, scale up 
-
         // Progressive upsamples
         for (int32 mip = bloomMipCount - 2; mip >= 0; mip--)
         {
@@ -399,7 +392,7 @@ void PostProcessingPass::Render(RenderContext& renderContext, GPUTexture* input,
             context->SetRenderTarget(bloomBuffer2->View(0, mip));
             context->SetViewportAndScissors(mipWidth, mipHeight);
             context->BindSR(0, upscalebuffer->View(0, mip + 1));
-            context->BindSR(1, bloomBuffer1->View(0, mip + 1)); // we're going to paste this in
+            context->BindSR(1, bloomBuffer1->View(0, mip + 1)); 
             context->SetState(_psBloomDualFilterUpsample);
             context->DrawFullscreenTriangle();
             context->ResetRenderTarget();

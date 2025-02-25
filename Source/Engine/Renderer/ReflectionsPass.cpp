@@ -336,8 +336,8 @@ void ReflectionsPass::Dispose()
 
 bool SortProbes(RenderEnvironmentProbeData const& p1, RenderEnvironmentProbeData const& p2)
 {
-    // Compare by radius
-    int32 res = static_cast<int32>(p1.Radius - p2.Radius);
+    // Sort by radius, LARGEST first (reversed from your current code)
+    int32 res = static_cast<int32>(p2.Radius - p1.Radius);
     if (res == 0)
     {
         // Compare by ID to prevent flickering
@@ -389,12 +389,14 @@ void ReflectionsPass::Render(RenderContext& renderContext, GPUTextureView* light
     context->Clear(*reflectionsBuffer, Color::Black);
     context->Clear(*diffuseReflectionsBuffer, Color::Black);
 
+
+
     // Reflection Probes pass
     if (renderProbes)
     {
         PROFILE_GPU_CPU("Env Probes");
 
-        GPUTextureView* rts[] = { reflectionsBuffer->View(), diffuseReflectionsBuffer->View()};
+        GPUTextureView* rts[] = { reflectionsBuffer->View(), diffuseReflectionsBuffer->View() };
         context->SetRenderTarget(nullptr, Span<GPUTextureView*>(rts, 2));
 
 

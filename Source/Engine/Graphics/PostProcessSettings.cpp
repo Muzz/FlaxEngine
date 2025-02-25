@@ -41,12 +41,11 @@ void BloomSettings::BlendWith(BloomSettings& other, float weight)
 
     BLEND_BOOL(Enabled);
     BLEND_FLOAT(Intensity);
-    BLEND_FLOAT(BloomClampIntensity);
-    BLEND_FLOAT(BloomSpreadBalance);
-    BLEND_FLOAT(BloomHighlightScale);
-    BLEND_FLOAT(BloomFalloffSoftness);
-    BLEND_FLOAT(BloomThresholdStart);
-    BLEND_FLOAT(BloomThresholdSoftness);
+    BLEND_FLOAT(Threshold);
+    BLEND_FLOAT(ThresholdKnee);
+    BLEND_FLOAT(Clamp);
+    BLEND_FLOAT(BaseMix);
+    BLEND_FLOAT(HighMix);
 }
 
 

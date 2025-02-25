@@ -410,42 +410,34 @@ API_ENUM(Attributes = "Flags") enum class BloomSettingsOverride : int32
     Intensity = 1 << 1,
 
     /// <summary>
-    /// Overrides <see cref="BloomSettings.BloomClampIntensity"/> property.
+    /// Overrides <see cref="BloomSettings.Threshold"/> property.
     /// </summary>
-    BloomClampIntensity = 1 << 2,
+    Threshold = 1 << 2,
 
     /// <summary>
-    /// Overrides <see cref="BloomSettings.BloomSpreadBalance"/> property.
+    /// Overrides <see cref="BloomSettings.ThresholdKnee"/> property.
     /// </summary>
-    BloomSpreadBalance = 1 << 3,
+    ThresholdKnee = 1 << 3,
 
     /// <summary>
-    /// Overrides <see cref="BloomSettings.BloomHighlightScale"/> property.
+    /// Overrides <see cref="BloomSettings.Clamp"/> property.
     /// </summary>
-    BloomHighlightScale = 1 << 4,
+    Clamp = 1 << 4,
 
     /// <summary>
-    /// Overrides <see cref="BloomSettings.BloomFalloffSoftness"/> property.
+    /// Overrides <see cref="BloomSettings.BaseMix"/> property.
     /// </summary>
-    BloomFalloffSoftness = 1 << 5,
+    BaseMix = 1 << 5,
 
     /// <summary>
-    /// Overrides <see cref="BloomSettings.BloomThresholdStart"/> property.
+    /// Overrides <see cref="BloomSettings.HighMix"/> property.
     /// </summary>
-    BloomThresholdStart = 1 << 6,
-
-    /// <summary>
-    /// Overrides <see cref="BloomSettings.BloomThresholdSoftness"/> property.
-    /// </summary>
-    BloomThresholdSoftness = 1 << 7,
-
+    HighMix = 1 << 6,
 
     /// <summary>
     /// All properties.
     /// </summary>
-    All = Enabled | Intensity | BloomClampIntensity | BloomSpreadBalance | BloomHighlightScale | BloomFalloffSoftness | BloomThresholdStart | BloomThresholdSoftness,
-
-
+    All = Enabled | Intensity | Threshold | ThresholdKnee | Clamp | BaseMix | HighMix,
 };
 
 /// <summary>
@@ -472,44 +464,38 @@ API_STRUCT() struct FLAXENGINE_API BloomSettings : ISerializable
     /// <summary>
     /// Overall bloom effect strength. Higher values create a stronger glow effect.
     /// </summary>
-    API_FIELD(Attributes = "Limit(0, 10000.0f, 0.001f), EditorOrder(1), PostProcessSetting((int)BloomSettingsOverride.Intensity)")
+    API_FIELD(Attributes = "Limit(0, 100.0f, 0.001f), EditorOrder(1), PostProcessSetting((int)BloomSettingsOverride.Intensity)")
         float Intensity = 1.0f;
 
     /// <summary>
-    /// Maximum HDR value at the start of the bloom chain.
+    /// Luminance threshold where bloom begins.
     /// </summary>
-    API_FIELD(Attributes = "Limit(0, 10000.0f, 0.01f), EditorOrder(2), PostProcessSetting((int)BloomSettingsOverride.BloomClampIntensity)")
-        float BloomClampIntensity = 3.0f;
+    API_FIELD(Attributes = "Limit(0, 100.0f, 0.1f), EditorOrder(2), PostProcessSetting((int)BloomSettingsOverride.Threshold)")
+        float Threshold = 1.0f;
 
     /// <summary>
-    /// Controls a lerp between a tight bloom setting and a soft bloom. 0 = tight core bloom, 1 = wide soft bloom
+    /// Controls the threshold rolloff curve. Higher values create a softer transition.
     /// </summary>
-    API_FIELD(Attributes = "Limit(0, 1.0f, 0.01f), EditorOrder(3), PostProcessSetting((int)BloomSettingsOverride.BloomSpreadBalance)")
-        float BloomSpreadBalance = 0.25f;
+    API_FIELD(Attributes = "Limit(0, 100.0f, 0.01f), EditorOrder(3), PostProcessSetting((int)BloomSettingsOverride.ThresholdKnee)")
+        float ThresholdKnee = 0.5f;
 
     /// <summary>
-    /// Extra multiplier for very bright pixels
+    /// Maximum brightness limit for bloom highlights.
     /// </summary>
-    API_FIELD(Attributes = "Limit(0.00f, 1000.0f, 0.01f), EditorOrder(4), PostProcessSetting((int)BloomSettingsOverride.BloomHighlightScale)")
-        float BloomHighlightScale = 0.5f;
+    API_FIELD(Attributes = "Limit(0, 100.0f, 0.1f), EditorOrder(4), PostProcessSetting((int)BloomSettingsOverride.Clamp)")
+        float Clamp = 3.0f;
 
     /// <summary>
-    /// Controls how gradually the bloom effect fades
+    /// Base mip contribution for wider, softer bloom.
     /// </summary>
-    API_FIELD(Attributes = "Limit(0.00f, 1000.0f, 0.01f), EditorOrder(5), PostProcessSetting((int)BloomSettingsOverride.BloomFalloffSoftness)")
-        float BloomFalloffSoftness = 0.5f;
+    API_FIELD(Attributes = "Limit(0, 1.0f, 0.01f), EditorOrder(5), PostProcessSetting((int)BloomSettingsOverride.BaseMix)")
+        float BaseMix = 0.6f;
 
     /// <summary>
-    /// At what brightness level do we threshold to generate the bloom from. 
+    /// High mip contribution for tighter, core bloom.
     /// </summary>
-    API_FIELD(Attributes = "Limit(0.0f, 1000.0f, 0.1f), EditorOrder(6), PostProcessSetting((int)BloomSettingsOverride.BloomThresholdStart)")
-        float BloomThresholdStart = 1.0f;
-
-    /// <summary>
-    /// Width of the softknee threshold, to generate bloom from
-    /// </summary>
-    API_FIELD(Attributes = "Limit(0.0f, 1000.0f, 0.1f), EditorOrder(7), PostProcessSetting((int)BloomSettingsOverride.BloomThresholdSoftness)")
-        float BloomThresholdSoftness = 1.0f;
+    API_FIELD(Attributes = "Limit(0, 1.0f, 0.01f), EditorOrder(6), PostProcessSetting((int)BloomSettingsOverride.HighMix)")
+        float HighMix = 1.0f;
 
 public:
     /// <summary>

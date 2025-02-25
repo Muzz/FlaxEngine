@@ -36,17 +36,17 @@
 
 META_CB_BEGIN(0, Data)
 
-// New bloom parameters
-float BloomIntensity;             // Overall bloom strength multiplier
-float BloomClampIntensity;        // safety control
-float BloomSpreadBalance;         // 0 = tight core bloom, 1 = wide soft bloom
-float BloomHighlightScale;        // Extra multiplier for very bright pixels
-float BloomFalloffSoftness;       // Controls how gradually the bloom effect fades
-float BloomThresholdStart;
-float BloomThresholdSoftness;
-float BloomMipCount; 
-float BloomLayer;
-float3 BloomPad;
+// Bloom parameters 
+float BloomIntensity;             
+float BloomClamp;                 
+float BloomThreshold;             
+float BloomThresholdKnee;         
+
+float BloomBaseMix;               
+float BloomHighMix;               
+float BloomMipCount;              
+float BloomLayer;               
+
 
 float3 VignetteColor;
 float VignetteShapeFactor;
@@ -330,10 +330,10 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
    color = color * (1.0 + finalLuma);
 
    // Apply threshold with quadratic rolloff for smoother transition
-   float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
-   float threshold = max(BloomThresholdStart, 0.2);
-   float knee = threshold * BloomThresholdSoftness;
-   float soft_max = threshold + knee;
+    float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
+    float threshold = max(BloomThreshold, 0.2);
+    float knee = threshold * BloomThresholdKnee;
+    float soft_max = threshold + knee;
 
    float contribution = 0;
    if (luminance > threshold) {
@@ -347,7 +347,7 @@ float4 PS_BloomBrightPass(Quad_VS2PS input) : SV_Target
        }
    }
    
-   float testc = BloomClampIntensity * 50;
+   float testc = BloomClamp;
    float3 clamped = (color * contribution);
    clamped.r = min(clamped.r, testc);
    clamped.g = min(clamped.g, testc);
@@ -471,12 +471,14 @@ float4 PS_BloomDualFilterUpsample(Quad_VS2PS input) : SV_Target
     // Calculate mip fade factor (0 = smallest mip, 1 = largest mip)
     float mipFade = BloomLayer / (BloomMipCount - 1);
 
+    // Muzz says: 
     // Lerp between your desired intensity values based on mip level
     // setting both to 0.6 is a decent default, but playing with these numbers will let you dial in the blending between the lowest and highest mips. 
     // you can make some really ugly bloom if you go too far. 
     // note this does change the intensity of the bloom. 
+    // This was my own invention
 
-    float mipIntensity = lerp(0.6, 1.0, mipFade); // Adjust these values for desired effect
+    float mipIntensity = lerp(BloomBaseMix, BloomHighMix, mipFade);
     color *= mipIntensity;
 
     BRANCH
@@ -562,7 +564,7 @@ float4 PS_Ghosts(Quad_VS2PS input) : SV_Target
 			Input3.Sample(SamplerLinearClamp, offset + ghostVecnNorm * distortion.r).r,
 			Input3.Sample(SamplerLinearClamp, offset + ghostVecnNorm * distortion.g).g,
 			Input3.Sample(SamplerLinearClamp, offset + ghostVecnNorm * distortion.b).b);
-		color = clamp((color * 10.0f) + LensBias, 0, 10) * (LensScale * weight);
+		color = clamp((color * 1.0f) + LensBias, 0, 10) * (LensScale * weight);
 
 
 		// Accumulate color

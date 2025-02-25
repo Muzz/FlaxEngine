@@ -36,30 +36,8 @@ Model_VS2PS VS_Model(ModelInput_PosOnly input)
 	return output;
 }
 
-/*
-// Pixel Shader for enviroment probes rendering
-META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_EnvProbe(Model_VS2PS input) : SV_Target0
-{
-	// Obtain UVs corresponding to the current pixel
-	float2 uv = (input.ScreenPos.xy / input.ScreenPos.w) * float2(0.5, -0.5) + float2(0.5, 0.5);
 
-	// Sample GBuffer
-	GBufferData gBufferData = GetGBufferData();
-	GBufferSample gBuffer = SampleGBuffer(gBufferData, uv);
 
-	// Check if cannot light a pixel
-	BRANCH
-	if (gBuffer.ShadingModel == SHADING_MODEL_UNLIT)
-	{
-		discard;
-		return 0;
-	}
-
-	// Sample probe
-	return SampleReflectionProbe(gBufferData.ViewPos, Probe, PData, gBuffer.WorldPos, gBuffer.Normal, gBuffer.Roughness);
-}
-*/
 
 // In the environment probe pixel shader:
 struct ProbeBufferOutput 
@@ -80,30 +58,28 @@ ProbeBufferOutput PS_EnvProbe(Model_VS2PS input)
     GBufferData gBufferData = GetGBufferData();
     GBufferSample gBuffer = SampleGBuffer(gBufferData, uv);
     
-    // Probe sampling setup
-    float3 captureVector = gBuffer.WorldPos - PData.ProbePos;
-    float distance = length(captureVector);
-    float radius = 1.0 / PData.ProbeInvRadius;
-    
-    // Calculate weight with more brightness
-    float normalizedDist = distance / radius;
-    float falloff = 1.0 - saturate(normalizedDist); // Linear falloff
-    
-    // Use a scaled importance factor to prevent things from getting too dark
-    float importance = saturate(0.5 / radius); // Scaled based on radius, but less aggressive
-    
-    // Combine factors and boost overall brightness
-    float weight = falloff * (1.0 + importance) * PData.ProbeBrightness;
-    
-    // Ensure smaller probes still have more influence
-    weight *= 1.0 + (0.5 * importance);
-    
-    if (weight <= 0.0001f || gBuffer.ShadingModel == SHADING_MODEL_UNLIT)
+    if (gBuffer.ShadingModel == SHADING_MODEL_UNLIT)
     {
         discard;
         return output;
     }
     
+    float minpercent = 0.8f;
+    float3 captureVector = gBuffer.WorldPos - PData.ProbePos;
+    float distance = length(captureVector);
+    float radius = 1.0 / PData.ProbeInvRadius;
+    
+    // Perfect blend weight calculation
+    float normalizedDist = saturate(distance / radius);
+    float t = saturate((normalizedDist - minpercent) / (1.0 - minpercent));
+    float weight = (1.0 - t * t * (3.0 - 2.0 * t)) * PData.ProbeBrightness; // Smoothstep for C2 continuity
+    
+    if (weight <= 0.0001f)
+    {
+        discard;
+        return output;
+    }
+
     // Sample for specular reflections
     float3 V = normalize(gBuffer.WorldPos - gBufferData.ViewPos);
     float3 R = reflect(V, gBuffer.Normal);
@@ -119,45 +95,8 @@ ProbeBufferOutput PS_EnvProbe(Model_VS2PS input)
     return output;
 }
 
-/*
-// Pixel Shader for reflections combine pass (additive rendering to the light buffer)
-META_PS(true, FEATURE_LEVEL_ES2)
-float4 PS_CombinePass(Quad_VS2PS input) : SV_Target0
-{
-	// Sample GBuffer
-	GBufferData gBufferData = GetGBufferData();
-	GBufferSample gBuffer = SampleGBuffer(gBufferData, input.TexCoord);
 
-	// Check if cannot light pixel
-	BRANCH
-	if (gBuffer.ShadingModel == SHADING_MODEL_UNLIT)
-	{
-		return 0;
-	}
 
-	// Sample reflections buffer
-	float3 reflections = SAMPLE_RT(Reflections, input.TexCoord).rgb;
-
-	// Calculate specular color
-	float3 specularColor = GetSpecularColor(gBuffer);
-	if (gBuffer.Metalness < 0.001)
-		specularColor = 0.04f * gBuffer.Specular;
-
-	// Calculate reflecion color
-	float3 V = normalize(gBufferData.ViewPos - gBuffer.WorldPos);
-	float NoV = saturate(dot(gBuffer.Normal, V));
-	reflections *= EnvBRDF(PreIntegratedGF, specularColor, gBuffer.Roughness, NoV);
-
-	// Apply specular occlusion
-	float roughnessSq = gBuffer.Roughness * gBuffer.Roughness;
-	float specularOcclusion = GetSpecularOcclusion(NoV, roughnessSq, gBuffer.AO);
-	reflections *= specularOcclusion;
-
-	return float4(reflections, 0);
-}
-*/
-
-// In the combine pass:
 META_PS(true, FEATURE_LEVEL_ES2)
 float4 PS_CombinePass(Quad_VS2PS input) : SV_Target0
 {
@@ -168,8 +107,17 @@ float4 PS_CombinePass(Quad_VS2PS input) : SV_Target0
         return 0;
 
     float4 specularProbe = SAMPLE_RT(Reflections, input.TexCoord);
-    float4 diffuseProbe = SAMPLE_RT(DiffuseReflections, input.TexCoord); // New texture binding needed
+    float4 diffuseProbe = SAMPLE_RT(DiffuseReflections, input.TexCoord);
 
+    // Use proper weighted average blending - prevent division by zero
+    float specularWeight = max(specularProbe.a, 0.0001);
+    float diffuseWeight = max(diffuseProbe.a, 0.0001);
+    
+    // Proper weighted average
+    float3 specularResult = specularProbe.rgb / specularWeight;
+    float3 diffuseResult = diffuseProbe.rgb / diffuseWeight;
+    
+    // Prepare lighting calculations
     float3 V = normalize(gBufferData.ViewPos - gBuffer.WorldPos);
     float NoV = saturate(dot(gBuffer.Normal, V));
 
@@ -183,7 +131,7 @@ float4 PS_CombinePass(Quad_VS2PS input) : SV_Target0
     float3 diffuseResponse = diffuseColor * gBuffer.AO;
 
     return float4(
-        specularProbe.rgb * specularResponse + 
-        diffuseProbe.rgb * diffuseResponse, 
+        specularResult * specularResponse + 
+        diffuseResult * diffuseResponse, 
         0);
 }
