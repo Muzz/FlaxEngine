@@ -53,7 +53,6 @@ ProbeBufferOutput PS_EnvProbe(Model_VS2PS input)
 {
     ProbeBufferOutput output = (ProbeBufferOutput)0;
     
-    // Sample GBuffer
     float2 uv = (input.ScreenPos.xy / input.ScreenPos.w) * float2(0.5, -0.5) + float2(0.5, 0.5);
     GBufferData gBufferData = GetGBufferData();
     GBufferSample gBuffer = SampleGBuffer(gBufferData, uv);
@@ -64,15 +63,24 @@ ProbeBufferOutput PS_EnvProbe(Model_VS2PS input)
         return output;
     }
     
-    float minpercent = 0.8f;
     float3 captureVector = gBuffer.WorldPos - PData.ProbePos;
     float distance = length(captureVector);
     float radius = 1.0 / PData.ProbeInvRadius;
     
-    // Perfect blend weight calculation
     float normalizedDist = saturate(distance / radius);
-    float t = saturate((normalizedDist - minpercent) / (1.0 - minpercent));
-    float weight = (1.0 - t * t * (3.0 - 2.0 * t)) * PData.ProbeBrightness; // Smoothstep for C2 continuity
+    
+    // Calculate falloff with minimum radius
+    float weight;
+    if (normalizedDist < 0.5)
+    {
+        weight = 1.0;
+    }
+    else
+    {
+        float t = (normalizedDist - 0.5) / (1.0 - 0.5);
+        weight = 1.0 - t * t;
+    }
+    weight *= PData.ProbeBrightness;
     
     if (weight <= 0.0001f)
     {
@@ -85,16 +93,17 @@ ProbeBufferOutput PS_EnvProbe(Model_VS2PS input)
     float3 R = reflect(V, gBuffer.Normal);
     float3 specularDir = normalize(captureVector + R / PData.ProbeInvRadius);
     float3 specularSample = Probe.SampleLevel(SamplerLinearClamp, specularDir, ProbeMipFromRoughness(gBuffer.Roughness)).rgb;
-    output.Specular = float4(specularSample * weight, weight);
+
     
     // Sample for diffuse reflections
     float3 probeSpaceNormal = normalize(captureVector + gBuffer.Normal / PData.ProbeInvRadius);
     float3 diffuseSample = Probe.SampleLevel(SamplerLinearClamp, probeSpaceNormal, REFLECTION_CAPTURE_NUM_MIPS - 1).rgb;
-    output.Diffuse = float4(diffuseSample * weight, weight);
+
+    output.Specular = float4(specularSample, weight);
+    output.Diffuse = float4(diffuseSample, weight);
     
     return output;
 }
-
 
 
 META_PS(true, FEATURE_LEVEL_ES2)
@@ -109,14 +118,10 @@ float4 PS_CombinePass(Quad_VS2PS input) : SV_Target0
     float4 specularProbe = SAMPLE_RT(Reflections, input.TexCoord);
     float4 diffuseProbe = SAMPLE_RT(DiffuseReflections, input.TexCoord);
 
-    // Use proper weighted average blending - prevent division by zero
-    float specularWeight = max(specularProbe.a, 0.0001);
-    float diffuseWeight = max(diffuseProbe.a, 0.0001);
-    
-    // Proper weighted average
-    float3 specularResult = specularProbe.rgb / specularWeight;
-    float3 diffuseResult = diffuseProbe.rgb / diffuseWeight;
-    
+    // Skip if no probe contribution
+    if (specularProbe.a < 0.0001f && diffuseProbe.a < 0.0001f)
+        return 0;
+        
     // Prepare lighting calculations
     float3 V = normalize(gBufferData.ViewPos - gBuffer.WorldPos);
     float NoV = saturate(dot(gBuffer.Normal, V));
@@ -130,8 +135,13 @@ float4 PS_CombinePass(Quad_VS2PS input) : SV_Target0
     float3 specularResponse = EnvBRDF(PreIntegratedGF, specularColor, gBuffer.Roughness, NoV) * specularOcclusion;
     float3 diffuseResponse = diffuseColor * gBuffer.AO;
 
-    return float4(
-        specularResult * specularResponse + 
-        diffuseResult * diffuseResponse, 
-        0);
+    // Normalize contributions by total weight
+    float3 normalizedSpecular = specularProbe.a > 0.0001f ? specularProbe.rgb / specularProbe.a : 0;
+    float3 normalizedDiffuse = diffuseProbe.a > 0.0001f ? diffuseProbe.rgb / diffuseProbe.a : 0;
+    
+    // Apply material responses to the normalized probe contributions
+    float3 finalSpecular = normalizedSpecular * specularResponse;
+    float3 finalDiffuse = normalizedDiffuse * diffuseResponse;
+
+    return float4(finalSpecular + finalDiffuse, 0);
 }
