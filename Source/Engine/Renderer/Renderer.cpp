@@ -307,7 +307,11 @@ void Renderer::DrawSceneDepth(GPUContext* context, SceneRenderTask* task, GPUTex
     renderContext.View.Prepare(renderContext);
 
     // Call drawing (will collect draw calls)
-    DrawActors(renderContext, customActors);
+    RenderContextBatch renderContextBatch(renderContext);
+    DrawActors(renderContextBatch, customActors);
+
+    // Perform custom post-scene drawing (eg. GPU particles)
+    renderContext.List->DrainDelayedDraws(context, renderContextBatch, 0);
 
     // Sort draw calls
     renderContext.List->SortDrawCalls(renderContext, false, DrawCallsListType::Depth, DrawPass::Depth);
