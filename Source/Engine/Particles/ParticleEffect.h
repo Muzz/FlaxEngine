@@ -121,6 +121,7 @@ API_CLASS(Attributes="ActorContextMenu(\"New/Visuals/Particle Effect\"), ActorTo
 class FLAXENGINE_API ParticleEffect : public Actor, IAssetReference
 {
     DECLARE_SCENE_OBJECT(ParticleEffect);
+    friend class ParticlesSystem;
 public:
     /// <summary>
     /// The particles simulation update modes.
@@ -162,7 +163,7 @@ public:
     };
 
 private:
-    uint64 _lastUpdateFrame;
+    bool _isQueued = false; // Added to the particles update list (until the next update)
     Real _lastMinDstSqr;
     int32 _sceneRenderingKey = -1;
     uint32 _parametersVersion = 0; // Version number for _parameters to be in sync with Instance.ParametersVersion

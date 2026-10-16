@@ -20,7 +20,6 @@
 
 ParticleEffect::ParticleEffect(const SpawnParams& params)
     : Actor(params)
-    , _lastUpdateFrame(0)
     , _lastMinDstSqr(MAX_Real)
     , ParticleSystem(this)
 {
@@ -277,11 +276,11 @@ void ParticleEffect::UpdateSimulation(bool singleFrame)
     if (!IsActiveInHierarchy()
         || ParticleSystem == nullptr
         || !ParticleSystem->IsLoaded()
-        || _lastUpdateFrame == Engine::UpdateCount)
+        || _isQueued)
         return;
 
     // Request update
-    _lastUpdateFrame = Engine::UpdateCount;
+    _isQueued = true;
     _lastMinDstSqr = MAX_Real;
     if (singleFrame)
         Instance.LastUpdateTime = (UseTimeScale ? Time::Update.Time : Time::Update.UnscaledTime).GetTotalSeconds();
@@ -789,6 +788,7 @@ void ParticleEffect::EndPlay()
 #endif
     CacheModifiedParameters();
     Particles::OnEffectDestroy(this);
+    _isQueued = false;
     Instance.ClearState();
     _parameters.Clear();
     _parametersVersion = 0;

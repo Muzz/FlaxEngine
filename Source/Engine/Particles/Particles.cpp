@@ -1781,6 +1781,8 @@ void ParticlesSystem::PostExecute(TaskGraph* graph)
     // Cleanup
     Particles::SystemLocker.ReadUnlock();
     Active = false;
+    for (ParticleEffect* effect : UpdateList)
+        effect->_isQueued = false;
     UpdateList.Clear();
 
 #if COMPILE_WITH_GPU_PARTICLES
